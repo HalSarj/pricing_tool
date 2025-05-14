@@ -274,6 +274,30 @@ function enrichEsisData(esisDataArray) {
     const preEnrichmentTotal = esisDataArray.reduce((sum, record) => sum + (record.Loan || 0), 0);
     console.log('DEBUG - Total loan amount before enrichment:', preEnrichmentTotal.toLocaleString());
     
+    // Filter out Right to Buy products before any processing
+    const filteredEsisData = esisDataArray.filter(record => {
+        // Check for Right to Buy in various possible fields
+        const productType = (record.ProductType || record.Mortgage_Type || '').toLowerCase();
+        const purchaseType = (record.PurchaseType || '').toLowerCase();
+        const description = (record.Description || record.Product_Description || '').toLowerCase();
+        
+        // Check if any field contains 'right to buy' or 'rtb'
+        const isRightToBuy = 
+            productType.includes('right to buy') || productType.includes('rtb') ||
+            purchaseType.includes('right to buy') || purchaseType.includes('rtb') ||
+            description.includes('right to buy') || description.includes('rtb');
+            
+        // Return false to filter out Right to Buy products
+        return !isRightToBuy;
+    });
+    
+    // Log how many Right to Buy products were filtered out
+    const rightToBuyCount = esisDataArray.length - filteredEsisData.length;
+    console.log(`Filtered out ${rightToBuyCount} Right to Buy products (${((rightToBuyCount / esisDataArray.length) * 100).toFixed(2)}% of total)`);
+    
+    // Use the filtered data for further processing
+    esisDataArray = filteredEsisData;
+    
     if (!state.swapRatesData || state.swapRatesData.length === 0) {
         console.warn('Swap rates not loaded or empty. Cannot fully enrich ESIS data.');
         // Return data with Month and default PremiumBand if swap rates are missing
@@ -576,7 +600,16 @@ function determinePurchaseType(record) {
     } else if (record.Second_Time_Buyer === 'yes' || record.Second_Time_Buyer === true) {
         return 'Home mover';
     } else if (record.Remortgages === 'yes' || record.Remortgages === true) {
-        return 'RTB Remortgage';
+        return 'Remortgage';
+    }
+    
+    // Check for Right to Buy indicators in various fields
+    const productType = (record.ProductType || record.Mortgage_Type || '').toLowerCase();
+    const description = (record.Description || record.Product_Description || '').toLowerCase();
+    
+    if (productType.includes('right to buy') || productType.includes('rtb') ||
+        description.includes('right to buy') || description.includes('rtb')) {
+        return 'Right to buy';
     }
     
     // Default if we can't determine
