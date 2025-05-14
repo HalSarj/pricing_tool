@@ -62,6 +62,7 @@ const elements = {
 document.addEventListener('DOMContentLoaded', initializeApp);
 
 function initializeApp() {
+    
     // Set up event listeners
     elements.esisFileInput.addEventListener('change', handleESISFileSelect);
     elements.swapFileInput.addEventListener('change', handleSwapFileSelect);
@@ -1767,10 +1768,15 @@ function applyFilters() {
         if (state.processedData && state.processedData.premiumBands) {
             populatePremiumBandSelect(state.processedData.premiumBands);
             elements.marketShareSection.classList.remove('hidden');
+            
+            // Update market share table if it exists instead of resetting it
+            if (state.marketShareFilters.selectedPremiumBands && 
+                state.marketShareFilters.selectedPremiumBands.length > 0) {
+                updateMarketShareTable();
+            }
         } else {
             elements.marketShareSection.classList.add('hidden');
         }
-        resetMarketShareTable();
         // Update charts
         // updateCharts();
         
@@ -1986,15 +1992,21 @@ function resetMarketShareTable() {
 
 // --- MARKET SHARE: Aggregate data by lender and premium band ---
 function aggregateLenderMarketShare(selectedBands) {
-    // Create a custom filter function that ignores the lender filter
-    // but respects date range, product type, and purchase type filters
-    function customFilterForMarketShare(data) {
+    // Use the currently filtered data but remove any lender filter
+    // This ensures the market share analysis respects all other filters
+    function removeOnlyLenderFilter(data) {
         if (!data || !Array.isArray(data)) {
-            console.error('Invalid data provided to customFilterForMarketShare:', data);
+            console.error('Invalid data provided to removeOnlyLenderFilter:', data);
             return [];
         }
         
-        return data.filter(record => {
+        // If no lender filter is applied, just return the data as is
+        if (!state.filters.lenders || state.filters.lenders.length === 0) {
+            return data;
+        }
+        
+        // Otherwise, we need to re-filter the original data with all filters except lender
+        return state.esisData.filter(record => {
             try {
                 // Skip invalid records
                 if (!record || typeof record !== 'object') {
@@ -2026,11 +2038,33 @@ function aggregateLenderMarketShare(selectedBands) {
                     }
                 }
                 
-                // Ignore lender filter - include all lenders
+                // Filter by LTV range
+                if (state.filters.ltvRange !== 'all') {
+                    // Use our standardized LTV field from mapping
+                    let ltv = record.StandardizedLTV;
+                    
+                    // If LTV is available, filter by it
+                    if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+                        if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
+                            return false;
+                        } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                            return false;
+                        }
+                    }
+                }
                 
+                // Apply product term filter
+                if (document.getElementById('product-term-filter').value !== 'all') {
+                    const termFilterResult = getDataByProductTerm([record], document.getElementById('product-term-filter').value);
+                    if (termFilterResult.length === 0) {
+                        return false;
+                    }
+                }
+                
+                // Ignore lender filter - include all lenders
                 return true;
             } catch (error) {
-                console.error('Error in customFilterForMarketShare:', error, record);
+                console.error('Error in removeOnlyLenderFilter:', error, record);
                 return false;
             }
         });
@@ -2045,9 +2079,22 @@ function aggregateLenderMarketShare(selectedBands) {
         state.filters.premiumRange[1] = 520;
     }
     
-    // Filter data using our custom filter that ignores lender filter
-    const filtered = customFilterForMarketShare(state.esisData);
-    console.log(`Market Share Analysis: Using ${filtered.length} records (ignoring lender filter)`);
+    // Get data with all filters except lender filter (safely)
+    let filtered = [];
+    if (state.filteredData && Array.isArray(state.filteredData)) {
+        filtered = removeOnlyLenderFilter(state.filteredData);
+        console.log(`Market Share Analysis: Using ${filtered.length} records (respecting all filters except lender)`);
+    } else {
+        // Fallback to using all ESIS data if filtered data is not available
+        console.log('Market Share Analysis: Filtered data not available, using all ESIS data');
+        if (state.esisData && Array.isArray(state.esisData)) {
+            filtered = removeOnlyLenderFilter(state.esisData);
+            console.log(`Market Share Analysis: Using ${filtered.length} records from all ESIS data`);
+        } else {
+            console.error('Market Share Analysis: No valid data available');
+            filtered = [];
+        }
+    }
     
     // Restore original premium range
     state.filters.premiumRange = originalPremiumRange;
@@ -2237,14 +2284,47 @@ function applyMarketShareAnalysis() {
     console.log('DIAGNOSTIC - Selected premium bands for market share analysis:', selectedBands);
     console.log('DIAGNOSTIC - 500-520 band is selected:', selectedBands.includes('500-520'));
     
-    // Filter data by current filters (date, product, etc)
-    const data = filterData(state.esisData);
+    // Save the selected bands in state
+    state.marketShareFilters.selectedPremiumBands = selectedBands;
     
-    // DIAGNOSTIC: Check for records in the 500-520 band
-    const highPremiumRecords = data.filter(item => item.PremiumBand === '500-520');
-    console.log(`DIAGNOSTIC - Records in 500-520 band after filtering: ${highPremiumRecords.length}`);
+    // Update the market share table
+    updateMarketShareTable();
+}
+
+// New function to update the market share table based on current filters
+function updateMarketShareTable() {
+    // Make sure we have filtered data to work with
+    if (!state.filteredData || !Array.isArray(state.filteredData)) {
+        console.error('Cannot update market share table: filtered data is not available');
+        return;
+    }
     
-    if (highPremiumRecords.length > 0) {
+    // Use the currently filtered data (which respects the top filters)
+    const data = state.filteredData;
+    
+    // Make sure we have market share filters initialized
+    if (!state.marketShareFilters) {
+        state.marketShareFilters = { selectedPremiumBands: [] };
+    }
+    
+    // Get the selected premium bands
+    const selectedBands = state.marketShareFilters.selectedPremiumBands;
+    
+    if (!selectedBands || selectedBands.length === 0) {
+        // No bands selected, nothing to update
+        return;
+    }
+    
+    // DIAGNOSTIC: Check for records in the 500-520 band (safely)
+    let highPremiumRecords = [];
+    if (data && Array.isArray(data)) {
+        highPremiumRecords = data.filter(item => item && item.PremiumBand === '500-520');
+        console.log(`DIAGNOSTIC - Records in 500-520 band after filtering: ${highPremiumRecords.length}`);
+    } else {
+        console.log('DIAGNOSTIC - Cannot check for 500-520 band records: data is not an array');
+    }
+    
+    if (highPremiumRecords && highPremiumRecords.length > 0) {
         // Calculate total loan amount in this band
         const totalLoanAmount = highPremiumRecords.reduce((sum, record) => sum + (record.Loan || 0), 0);
         console.log(`DIAGNOSTIC - Total loan amount in 500-520 band: £${totalLoanAmount.toLocaleString()}`);
@@ -2272,7 +2352,6 @@ function applyMarketShareAnalysis() {
             });
     }
     
-    state.marketShareFilters.selectedPremiumBands = selectedBands;
     // Aggregate and render
     const dataForRender = aggregateLenderMarketShare(selectedBands);
     state.lenderMarketShareData = dataForRender;
