@@ -78,6 +78,14 @@ function initializeApp() {
     elements.premiumMin.addEventListener('change', validatePremiumRange);
     elements.premiumMax.addEventListener('change', validatePremiumRange);
     
+    // Add event listener for product term filter
+    document.getElementById('product-term-filter').addEventListener('change', function() {
+        // Log the selected value to verify it's working
+        console.log('Product term filter changed:', this.value);
+        // Apply filters to update the tables
+        applyFilters();
+    });
+    
     console.log('Mortgage Market Analysis Tool initialized');
 }
 
@@ -220,6 +228,27 @@ async function processData() {
         // Enrich state.esisData with PremiumBand and Month
         state.esisData = enrichEsisData(state.esisData);
         
+        // Log product type counts to verify both 2-year and 5-year products are present
+        const twoYearCount = state.esisData.filter(r => r.NormalizedTerm === 24).length;
+        const fiveYearCount = state.esisData.filter(r => r.NormalizedTerm === 60).length;
+        const totalCount = state.esisData.length;
+        const twoYearPercent = ((twoYearCount / totalCount) * 100).toFixed(2);
+        const fiveYearPercent = ((fiveYearCount / totalCount) * 100).toFixed(2);
+        
+        console.log('=== PRODUCT TYPE VERIFICATION ===');
+        console.log(`Total products processed: ${totalCount}`);
+        console.log(`2-year fixed products: ${twoYearCount} (${twoYearPercent}%)`);
+        console.log(`5-year fixed products: ${fiveYearCount} (${fiveYearPercent}%)`);
+        console.log(`Other term products: ${totalCount - twoYearCount - fiveYearCount} (${(100 - parseFloat(twoYearPercent) - parseFloat(fiveYearPercent)).toFixed(2)}%)`);
+        
+        // Warning if either product type is missing or significantly imbalanced
+        if (twoYearCount === 0 || fiveYearCount === 0) {
+            console.warn('WARNING: One or more product types are missing from the dataset!');
+        } else if (twoYearCount < 0.1 * totalCount || fiveYearCount < 0.1 * totalCount) {
+            console.warn('WARNING: Product type distribution is significantly imbalanced (one type < 10% of total).');
+        }
+        console.log('=================================');
+        
         // DEBUG: Calculate total loan amount after enrichment
         const postEnrichmentTotal = state.esisData.reduce((sum, record) => sum + (record.Loan || 0), 0);
         console.log('DEBUG - Total loan amount after enrichment:', postEnrichmentTotal.toLocaleString());
@@ -321,13 +350,13 @@ function enrichEsisData(esisDataArray) {
         };
     }
 
-    // Process each record and filter out those with no matching swap rate
+    // Process each record and filter out those with no matching swap rate or non-standard terms
     const enrichedData = esisDataArray
         .map(esisRecord => {
-            // Find matching swap rate - may return null if no suitable match within tolerance
-            const matchingSwapRate = findMatchingSwapRate(esisRecord);
+            // Find matching swap rate using the new wrapper function that handles normalized terms
+            const matchingSwapRate = getMatchingSwapRate(esisRecord);
             
-            // If no matching swap rate found, return null to filter out this record
+            // If no matching swap rate found or non-standard term, return null to filter out this record
             if (!matchingSwapRate) {
                 return null;
             }
@@ -346,7 +375,7 @@ function enrichEsisData(esisDataArray) {
                 Month: month
             };
         })
-        .filter(record => record !== null); // Remove records with no matching swap rate
+        .filter(record => record !== null); // Remove records with no matching swap rate or non-standard terms
 
     // Log swap rate tracking statistics
     console.log('Swap Rate Matching Statistics:', {
@@ -697,6 +726,53 @@ function determinePurchaseType(record) {
     return 'Unknown';
 }
 
+// Product Term Normalization Functions
+/**
+ * Normalizes product tie-in periods to standard terms (24 months for 2-year fixed, 60 months for 5-year fixed)
+ * @param {string|number} tieInPeriod - The tie-in period from the product record
+ * @returns {number|null} - Returns 24 for 2-year fixed, 60 for 5-year fixed, or null for non-standard terms
+ */
+function normalizeProductTerm(tieInPeriod) {
+    // Convert to number if it's a string
+    const period = parseInt(tieInPeriod) || 0;
+    
+    // Normalize to standard terms
+    if (period >= 24 && period <= 27) {
+        return 24; // 2-year fixed
+    } else if (period >= 60 && period <= 63) {
+        return 60; // 5-year fixed
+    } else {
+        return null; // Non-standard term
+    }
+}
+
+/**
+ * Wrapper for findMatchingSwapRate that uses normalized product terms
+ * @param {Object} esisRecord - The ESIS record to find a matching swap rate for
+ * @returns {Object|null} - The matching swap rate or null if no match found
+ */
+function getMatchingSwapRate(esisRecord) {
+    // Add normalized term to the record
+    const normalizedTerm = normalizeProductTerm(esisRecord.TieInPeriod);
+    esisRecord.NormalizedTerm = normalizedTerm;
+    
+    // Skip non-standard terms
+    if (normalizedTerm === null) {
+        return null;
+    }
+    
+    // Use the existing swap rate matching but with normalized term
+    const originalTieInPeriod = esisRecord.TieInPeriod;
+    esisRecord.TieInPeriod = normalizedTerm;
+    
+    const result = findMatchingSwapRate(esisRecord);
+    
+    // Restore original value
+    esisRecord.TieInPeriod = originalTieInPeriod;
+    
+    return result;
+}
+
 // Premium Calculation Functions
 function findMatchingSwapRate(esisRecord) {
     // Initialize tracking if not already done
@@ -932,7 +1008,6 @@ function calculatePremiumOverSwap(esisRecord, swapRate) {
             Calculation: `(${esisRate} - ${swapRateValue}) * 10000 = ${premiumBps}`
         });
     }
-    
     return premiumBps;
 }
 
@@ -952,6 +1027,40 @@ function assignPremiumBand(premiumBps) {
     // Floor to nearest 20bps band
     const lowerBound = Math.floor(premiumBps / 20) * 20;
     return `${lowerBound}-${lowerBound + 20}`;
+}
+
+/**
+ * Filters data by product term (2-year, 5-year, or all)
+ * @param {Array} data - The dataset to filter
+ * @param {string} term - The product term to filter by ('all', '2year', or '5year')
+ * @returns {Array} - Filtered dataset containing only records matching the specified term
+ */
+function getDataByProductTerm(data, term) {
+    // Return all data if term is 'all' or invalid
+    if (!data || !Array.isArray(data) || term === 'all') {
+        return data;
+    }
+    
+    // Map term values to normalized term values
+    const normalizedTerm = term === '2year' ? 24 : 60;
+    
+    // Filter data by normalized term
+    return data.filter(record => record.NormalizedTerm === normalizedTerm);
+}
+
+/**
+ * Applies product term filtering to the data based on UI selection
+ * @param {Array} data - The dataset to filter
+ * @returns {Array} - Dataset filtered by the selected product term
+ */
+function applyProductTermFilter(data) {
+    if (!data) return [];
+    
+    // Get the selected product term from the UI
+    const productTermFilter = document.getElementById('product-term-filter').value;
+    
+    // Use the getDataByProductTerm helper function to filter the data
+    return getDataByProductTerm(data, productTermFilter);
 }
 
 function extractMonth(date) {
@@ -1568,15 +1677,74 @@ function applyFilters() {
             console.log('applyFilters - state.esisData is empty or undefined BEFORE filterData call.');
         }
 
-        // Apply filters to the data
+        // Apply existing filters to the data
         state.filteredData = filterData(state.esisData);
         
-        // Log filtering results
-        console.log(`Filtering complete: ${state.filteredData.length} records match the criteria out of ${state.esisData.length} total records`);
+        // Log filtering results after applying standard filters
+        console.log(`Standard filtering complete: ${state.filteredData.length} records match the criteria out of ${state.esisData.length} total records`);
         
-        // DEBUG: Calculate total loan amount after filtering
+        // Apply product term filter separately
+        const beforeProductTermFilter = state.filteredData.length;
+        const selectedProductTerm = document.getElementById('product-term-filter').value;
+        
+        // Log detailed information before applying product term filter
+        console.log('=== PRODUCT TERM FILTER - BEFORE APPLYING ===');
+        console.log(`Timestamp: ${new Date().toISOString()}`);
+        console.log(`Records before product term filter: ${beforeProductTermFilter}`);
+        console.log(`Selected product term filter: ${selectedProductTerm}`);
+        
+        // Log sample records before filtering (first 3 records)
+        if (state.filteredData && state.filteredData.length > 0) {
+            console.log('Sample records before product term filtering:');
+            state.filteredData.slice(0, 3).forEach((record, index) => {
+                console.log(`Sample ${index + 1}:`, {
+                    Provider: record.Provider,
+                    NormalizedTerm: record.NormalizedTerm,
+                    TieInPeriod: record.TieInPeriod,
+                    Rate: record.Rate,
+                    PremiumOverSwap: record.PremiumOverSwap
+                });
+            });
+        }
+        
+        // Apply the product term filter
+        state.filteredData = applyProductTermFilter(state.filteredData);
+        
+        // Calculate filtering statistics
+        const afterProductTermFilter = state.filteredData.length;
+        const removedRecords = beforeProductTermFilter - afterProductTermFilter;
+        const removalPercentage = ((removedRecords / beforeProductTermFilter) * 100).toFixed(2);
+        
+        // Log detailed information after applying product term filter
+        console.log('=== PRODUCT TERM FILTER - AFTER APPLYING ===');
+        console.log(`Records after product term filter: ${afterProductTermFilter}`);
+        console.log(`Removed records: ${removedRecords} (${removalPercentage}%)`);
+        
+        // Log sample records after filtering (first 3 records)
+        if (state.filteredData && state.filteredData.length > 0) {
+            console.log('Sample records after product term filtering:');
+            state.filteredData.slice(0, 3).forEach((record, index) => {
+                console.log(`Sample ${index + 1}:`, {
+                    Provider: record.Provider,
+                    NormalizedTerm: record.NormalizedTerm,
+                    TieInPeriod: record.TieInPeriod,
+                    Rate: record.Rate,
+                    PremiumOverSwap: record.PremiumOverSwap
+                });
+            });
+        }
+        
+        // Log warnings for edge cases
+        if (afterProductTermFilter === 0) {
+            console.warn('WARNING: Product term filter removed all records! Check filter criteria.');
+        } else if (removalPercentage > 90) {
+            console.warn(`WARNING: Product term filter removed ${removalPercentage}% of records. Verify this is expected.`);
+        }
+        console.log('===========================================');
+        
+        // DEBUG: Calculate total loan amount after all filtering
         const postFilterTotal = state.filteredData.reduce((sum, record) => sum + (record.Loan || 0), 0);
-        console.log('DEBUG - Total loan amount after filtering:', postFilterTotal.toLocaleString());
+        console.log('DEBUG - Total loan amount after all filtering:', postFilterTotal.toLocaleString());
         
         // Process filtered data
         state.processedData = aggregateByPremiumBandAndMonth(state.filteredData);
