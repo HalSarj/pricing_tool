@@ -1027,10 +1027,10 @@ function assignPremiumBand(premiumBps) {
     // Add validation for extreme negative values
     // Limit to a reasonable range (-60 to +560 bps)
     if (premiumBps < -60) {
-        console.warn(`Unusually low premium detected: ${premiumBps}bps. Capping at -60bps.`);
+        // console.warn(`Unusually low premium detected: ${premiumBps}bps. Capping at -60bps.`);
         premiumBps = -60;
     } else if (premiumBps > 560) {
-        console.warn(`Unusually high premium detected: ${premiumBps}bps. Capping at 560bps.`);
+        // console.warn(`Unusually high premium detected: ${premiumBps}bps. Capping at 560bps.`);
         premiumBps = 560;
     }
     
@@ -1271,7 +1271,9 @@ function renderTable() {
                     const value = cell.getValue();
                     if (value === 0 || !value) return "£0.00m";
                     const valueInMillions = (value / 1000000).toFixed(2);
-                    return `£${valueInMillions}m`;
+                    // Format the millions with commas
+                    const formattedValueInMillions = Number(valueInMillions).toLocaleString();
+                    return `£${formattedValueInMillions}m`;
                 },
                 formatterParams: {},
                 headerSort: false,
@@ -1294,7 +1296,9 @@ function renderTable() {
                 const value = cell.getValue();
                 if (value === 0 || !value) return "£0.00m";
                 const valueInMillions = (value / 1000000).toFixed(2);
-                return `£${valueInMillions}m`;
+                // Format the millions with commas
+                const formattedValueInMillions = Number(valueInMillions).toLocaleString();
+                return `£${formattedValueInMillions}m`;
             },
             formatterParams: {},
             headerSort: false,
@@ -1311,7 +1315,9 @@ function renderTable() {
                 const value = cell.getValue();
                 if (value === 0 || !value) return "£0.00m";
                 const valueInMillions = (value / 1000000).toFixed(2);
-                return `£${valueInMillions}m`;
+                // Format the millions with commas
+                const formattedValueInMillions = Number(valueInMillions).toLocaleString();
+                return `£${formattedValueInMillions}m`;
             }
         });
 
@@ -2510,10 +2516,12 @@ function renderLenderMarketShareTable(data, selectedBands) {
                     const amt = cell.getValue();
                     const pct = cell.getRow().getData().Total_pct;
                     const amtInMillions = (amt / 1000000).toFixed(2);
+                    // Format the millions with commas
+                    const formattedAmtInMillions = Number(amtInMillions).toLocaleString();
                     return `<div style="display:flex;align-items:center;">
                         <div style="background:#b3ffc6;height:16px;width:${Math.min(100, pct || 0)}px;max-width:60px;margin-right:4px;"></div>
                         <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
-                            £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                            £${formattedAmtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
                         </span>
                     </div>`;
                 },
@@ -2529,10 +2537,12 @@ function renderLenderMarketShareTable(data, selectedBands) {
                     const amt = cell.getValue();
                     const pct = cell.getRow().getData().Total_below80_pct;
                     const amtInMillions = (amt / 1000000).toFixed(2);
+                    // Format the millions with commas
+                    const formattedAmtInMillions = Number(amtInMillions).toLocaleString();
                     return `<div style="display:flex;align-items:center;">
                         <div style="background:#d1ffdb;height:16px;width:${Math.min(100, pct || 0)}px;max-width:60px;margin-right:4px;"></div>
                         <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
-                            £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                            £${formattedAmtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
                         </span>
                     </div>`;
                 },
@@ -2548,10 +2558,12 @@ function renderLenderMarketShareTable(data, selectedBands) {
                     const amt = cell.getValue();
                     const pct = cell.getRow().getData().Total_above80_pct;
                     const amtInMillions = (amt / 1000000).toFixed(2);
+                    // Format the millions with commas
+                    const formattedAmtInMillions = Number(amtInMillions).toLocaleString();
                     return `<div style="display:flex;align-items:center;">
                         <div style="background:#80e699;height:16px;width:${Math.min(100, pct || 0)}px;max-width:60px;margin-right:4px;"></div>
                         <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
-                            £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                            £${formattedAmtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
                         </span>
                     </div>`;
                 },
