@@ -907,6 +907,8 @@ function findMatchingSwapRate(esisRecord) {
         }
     }
     
+    // Date comparison example logging commented out to reduce console clutter
+    /*
     // Log a few examples of date comparisons for verification
     if (Math.random() < 0.001) { // Log approximately 0.1% of comparisons
         console.log('Date comparison example:', {
@@ -916,6 +918,7 @@ function findMatchingSwapRate(esisRecord) {
                 'N/A'
         });
     }
+    */
     
     return matchingRate;
 }
@@ -991,6 +994,8 @@ function calculatePremiumOverSwap(esisRecord, swapRate) {
     
     // Log extreme values for investigation
     if (premiumBps > 300 || premiumBps < -30) {
+        // Premium investigation debug message commented out to reduce console clutter
+        /*
         console.log('PREMIUM INVESTIGATION:', {
             Provider: esisRecord.Provider,
             LoanAmount: esisRecord.Loan,
@@ -1007,6 +1012,7 @@ function calculatePremiumOverSwap(esisRecord, swapRate) {
             SwapProductTerm: swapRate.product_term_in_months,
             Calculation: `(${esisRate} - ${swapRateValue}) * 10000 = ${premiumBps}`
         });
+        */
     }
     return premiumBps;
 }
