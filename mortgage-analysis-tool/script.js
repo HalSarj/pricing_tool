@@ -139,6 +139,40 @@ async function processData() {
         // Parse ESIS data
         state.esisData = await parseCSVFile(esisFile);
         
+        // DEBUG: Log raw loan total immediately after parsing
+        const rawLoanTotal = state.esisData.reduce((sum, record) => sum + (parseFloat(record.Loan) || 0), 0);
+        console.log('DEBUG - Raw loan total from CSV:', rawLoanTotal.toLocaleString());
+        
+        // DEBUG: Log sample loan amounts from raw data
+        if (state.esisData.length > 0) {
+            console.log('DEBUG - Sample raw loan amounts from first 5 records:');
+            state.esisData.slice(0, 5).forEach((record, idx) => {
+                console.log(`Record ${idx}: Raw Loan=${record.Loan}, Type=${typeof record.Loan}`);
+            });
+        }
+        
+        // DEBUG: Check for duplicate records in raw data and deduplicate
+        const uniqueIds = new Set();
+        const uniqueRecords = [];
+        const duplicates = [];
+        
+        state.esisData.forEach(record => {
+            // Use id if available, otherwise create a composite key
+            const id = record.id || `${record.Provider}-${record.DocumentDate}-${record.Loan}`;
+            if (uniqueIds.has(id)) {
+                duplicates.push(record);
+            } else {
+                uniqueIds.add(id);
+                uniqueRecords.push(record);
+            }
+        });
+        
+        console.log('DEBUG - Number of potential duplicate records in raw data:', duplicates.length);
+        console.log('DEBUG - Number of unique records after deduplication:', uniqueRecords.length);
+        
+        // Replace the original data with deduplicated data
+        state.esisData = uniqueRecords;
+        
         // Map field names first, so validateData can use standardized names
         mapFieldNames(); 
         
@@ -177,8 +211,16 @@ async function processData() {
         // Validate data (now after mapFieldNames)
         validateData();
         
+        // DEBUG: Simple verification total - sum all loans without any grouping
+        const simpleVerificationTotal = state.esisData.reduce((sum, record) => sum + (record.Loan || 0), 0);
+        console.log('DEBUG - Simple verification total (just summing all loans):', simpleVerificationTotal.toLocaleString());
+        
         // Enrich state.esisData with PremiumBand and Month
         state.esisData = enrichEsisData(state.esisData);
+        
+        // DEBUG: Calculate total loan amount after enrichment
+        const postEnrichmentTotal = state.esisData.reduce((sum, record) => sum + (record.Loan || 0), 0);
+        console.log('DEBUG - Total loan amount after enrichment:', postEnrichmentTotal.toLocaleString());
         
         // Aggregate the enriched data for charts/processed views
         state.processedData = aggregateByPremiumBandAndMonth(state.esisData);
@@ -188,7 +230,14 @@ async function processData() {
             state.totalMarketByPremiumBand = { ...state.processedData.totals.byPremiumBand }; // Shallow copy
             state.overallTotalMarket = state.processedData.totals.overall;
             console.log('Initial Total Market by Premium Band:', JSON.stringify(state.totalMarketByPremiumBand));
-            console.log('Initial Overall Total Market:', state.overallTotalMarket);
+            console.log('Initial Overall Total Market:', state.overallTotalMarket.toLocaleString());
+            
+            // DEBUG: Compare with our simple verification total
+            console.log('DEBUG - Comparison of totals:', {
+                'Simple verification total': simpleVerificationTotal.toLocaleString(),
+                'Aggregated overall total': state.overallTotalMarket.toLocaleString(),
+                'Ratio (aggregated/simple)': (state.overallTotalMarket / simpleVerificationTotal).toFixed(2)
+            });
         } else {
             state.totalMarketByPremiumBand = {};
             state.overallTotalMarket = 0;
@@ -221,6 +270,10 @@ async function processData() {
 
 // Helper function to enrich ESIS data records
 function enrichEsisData(esisDataArray) {
+    // DEBUG: Calculate total loan amount before enrichment
+    const preEnrichmentTotal = esisDataArray.reduce((sum, record) => sum + (record.Loan || 0), 0);
+    console.log('DEBUG - Total loan amount before enrichment:', preEnrichmentTotal.toLocaleString());
+    
     if (!state.swapRatesData || state.swapRatesData.length === 0) {
         console.warn('Swap rates not loaded or empty. Cannot fully enrich ESIS data.');
         // Return data with Month and default PremiumBand if swap rates are missing
@@ -233,20 +286,61 @@ function enrichEsisData(esisDataArray) {
         }));
     }
 
-    return esisDataArray.map(esisRecord => {
-        const matchingSwapRate = findMatchingSwapRate(esisRecord); // Relies on state.swapRatesData
-        const premiumBps = calculatePremiumOverSwap(esisRecord, matchingSwapRate);
-        const premiumBand = assignPremiumBand(premiumBps);
-        const month = extractMonth(esisRecord.DocumentDate);
-        
-        return {
-            ...esisRecord,
-            SwapRate: matchingSwapRate ? matchingSwapRate.rate : null,
-            PremiumOverSwap: premiumBps,
-            PremiumBand: premiumBand,
-            Month: month
+    // Initialize swap rate tracking if not already done
+    if (!state.swapRateTracking) {
+        state.swapRateTracking = {
+            excludedRecords: 0,
+            excludedLoanAmount: 0,
+            missingDateRanges: {}
         };
+    }
+
+    // Process each record and filter out those with no matching swap rate
+    const enrichedData = esisDataArray
+        .map(esisRecord => {
+            // Find matching swap rate - may return null if no suitable match within tolerance
+            const matchingSwapRate = findMatchingSwapRate(esisRecord);
+            
+            // If no matching swap rate found, return null to filter out this record
+            if (!matchingSwapRate) {
+                return null;
+            }
+            
+            // Calculate premium and determine band
+            const premiumBps = calculatePremiumOverSwap(esisRecord, matchingSwapRate);
+            const premiumBand = assignPremiumBand(premiumBps);
+            const month = extractMonth(esisRecord.DocumentDate);
+            
+            return {
+                ...esisRecord,
+                SwapRate: matchingSwapRate.rate,
+                MatchedSwapDate: matchingSwapRate.effective_at,
+                PremiumOverSwap: premiumBps,
+                PremiumBand: premiumBand,
+                Month: month
+            };
+        })
+        .filter(record => record !== null); // Remove records with no matching swap rate
+
+    // Log swap rate tracking statistics
+    console.log('Swap Rate Matching Statistics:', {
+        TotalRecords: esisDataArray.length,
+        IncludedRecords: enrichedData.length,
+        ExcludedRecords: state.swapRateTracking.excludedRecords,
+        ExcludedLoanAmount: state.swapRateTracking.excludedLoanAmount.toLocaleString(),
+        ExclusionRate: ((state.swapRateTracking.excludedRecords / esisDataArray.length) * 100).toFixed(2) + '%',
+        MissingDateRanges: Object.keys(state.swapRateTracking.missingDateRanges).map(yearMonth => {
+            return `${yearMonth}: ${state.swapRateTracking.missingDateRanges[yearMonth]} records`;
+        }).join(', ')
     });
+
+    // Calculate total loan amount after filtering
+    const postEnrichmentTotal = enrichedData.reduce((sum, record) => sum + (record.Loan || 0), 0);
+    console.log('DEBUG - Total loan amount after swap rate filtering:', postEnrichmentTotal.toLocaleString());
+    console.log('DEBUG - Excluded loan amount due to missing swap rates:', state.swapRateTracking.excludedLoanAmount.toLocaleString());
+    console.log('DEBUG - Verification: Original total - Excluded total =', (preEnrichmentTotal - state.swapRateTracking.excludedLoanAmount).toLocaleString());
+    
+    return enrichedData;
 }
 
 // File Parsing Functions
@@ -381,6 +475,10 @@ function mapFieldNames() {
     try {
         console.log('Mapping field names for', state.esisData.length, 'records');
         
+        // DEBUG: Calculate total loan amount before mapping
+        const preMappingTotal = state.esisData.reduce((sum, record) => sum + (parseFloat(record.Loan) || 0), 0);
+        console.log('DEBUG - Total loan amount before field mapping:', preMappingTotal.toLocaleString());
+        
         if (state.esisData.length === 0) {
             console.warn('mapFieldNames called with no ESIS data.');
             return;
@@ -441,17 +539,30 @@ function mapFieldNames() {
             }
 
             // 6. Ensure Loan is a number
+            const originalLoan = record.Loan;
             mappedRecord.Loan = parseFloat(record.Loan);
             if (isNaN(mappedRecord.Loan)){
                 mappedRecord.Loan = 0; 
+            }
+            
+            // DEBUG: Log any significant changes to loan amounts during parsing
+            if (index < 5 || (originalLoan && Math.abs(mappedRecord.Loan - originalLoan) > 1000)) {
+                console.log(`DEBUG - Loan conversion: Record ${index}, Original=${originalLoan} (${typeof originalLoan}), Parsed=${mappedRecord.Loan} (${typeof mappedRecord.Loan})`);
             }
 
             return mappedRecord;
         });
         
-        // if (state.esisData.length > 0) { // Optional: for deep debugging
-        //     console.log('Field mapping complete. Sample record (after map):', state.esisData[0]);
-        // }
+        // DEBUG: Calculate total loan amount after mapping
+        const postMappingTotal = state.esisData.reduce((sum, record) => sum + (record.Loan || 0), 0);
+        console.log('DEBUG - Total loan amount after field mapping:', postMappingTotal.toLocaleString());
+        
+        if (state.esisData.length > 0) {
+            console.log('DEBUG - Sample mapped loan amounts from first 5 records:');
+            state.esisData.slice(0, 5).forEach((record, idx) => {
+                console.log(`Record ${idx}: Mapped Loan=${record.Loan}, Type=${typeof record.Loan}`);
+            });
+        }
     } catch (error) {
         console.error('Error mapping field names:', error);
         showError(`Error mapping field names: ${error.message}`);
@@ -474,15 +585,60 @@ function determinePurchaseType(record) {
 
 // Premium Calculation Functions
 function findMatchingSwapRate(esisRecord) {
-    // Get the document date
-    const documentDate = esisRecord.DocumentDate;
+    // Initialize tracking if not already done
+    if (!state.swapRateTracking) {
+        state.swapRateTracking = {
+            excludedRecords: 0,
+            excludedLoanAmount: 0,
+            missingDateRanges: {}
+        };
+    }
+    
+    // Ensure document date is a proper Date object with consistent timezone handling
+    let documentDate;
+    if (esisRecord.DocumentDate instanceof Date) {
+        documentDate = new Date(esisRecord.DocumentDate.getTime());
+    } else if (typeof esisRecord.DocumentDate === 'string') {
+        documentDate = new Date(esisRecord.DocumentDate);
+    } else {
+        // If no valid date, exclude the record
+        console.warn(`Invalid document date for record from ${esisRecord.Provider}, excluding from analysis`);
+        state.swapRateTracking.excludedRecords++;
+        state.swapRateTracking.excludedLoanAmount += (esisRecord.Loan || 0);
+        return null;
+    }
+    
+    // Verify the date is valid
+    if (isNaN(documentDate.getTime())) {
+        console.warn(`Invalid document date for record from ${esisRecord.Provider}: ${esisRecord.DocumentDate}, excluding from analysis`);
+        state.swapRateTracking.excludedRecords++;
+        state.swapRateTracking.excludedLoanAmount += (esisRecord.Loan || 0);
+        return null;
+    }
     
     // Get the tie-in period (product term) - default to 60 months (5 years) if not available
     const tieInPeriod = esisRecord.TieInPeriod || 60;
     
     // First try to find rates that match the product term
     let matchingRates = [...state.swapRatesData]
-        .filter(swap => swap.product_term_in_months === tieInPeriod);
+        .filter(swap => swap.product_term_in_months === tieInPeriod)
+        .map(swap => {
+            // Ensure effective_at is a proper Date object
+            let effectiveDate;
+            if (swap.effective_at instanceof Date) {
+                effectiveDate = new Date(swap.effective_at.getTime());
+            } else if (typeof swap.effective_at === 'string') {
+                effectiveDate = new Date(swap.effective_at);
+            } else {
+                effectiveDate = new Date(swap.effective_at);
+            }
+            
+            return {
+                ...swap,
+                effective_at: effectiveDate
+            };
+        })
+        .filter(swap => !isNaN(swap.effective_at.getTime())); // Filter out invalid dates
     
     // If no rates match the product term, try to find rates for a similar term
     if (matchingRates.length === 0) {
@@ -496,13 +652,28 @@ function findMatchingSwapRate(esisRecord) {
         
         // Get rates for the closest term
         matchingRates = [...state.swapRatesData]
-            .filter(swap => swap.product_term_in_months === closestTerm);
-        
-        console.log(`No exact match for term ${tieInPeriod}, using closest term ${closestTerm} for ${esisRecord.Provider}`);
+            .filter(swap => swap.product_term_in_months === closestTerm)
+            .map(swap => {
+                // Ensure effective_at is a proper Date object
+                let effectiveDate;
+                if (swap.effective_at instanceof Date) {
+                    effectiveDate = new Date(swap.effective_at.getTime());
+                } else if (typeof swap.effective_at === 'string') {
+                    effectiveDate = new Date(swap.effective_at);
+                } else {
+                    effectiveDate = new Date(swap.effective_at);
+                }
+                
+                return {
+                    ...swap,
+                    effective_at: effectiveDate
+                };
+            })
+            .filter(swap => !isNaN(swap.effective_at.getTime())); // Filter out invalid dates
     }
     
     // Sort by effective date
-    matchingRates.sort((a, b) => a.effective_at - b.effective_at);
+    matchingRates.sort((a, b) => a.effective_at.getTime() - b.effective_at.getTime());
     
     // Find the closest preceding swap rate
     let matchingRate = null;
@@ -514,28 +685,155 @@ function findMatchingSwapRate(esisRecord) {
         }
     }
     
-    // If no preceding rate found, use the earliest available rate
+    // Define tolerance window (±5 business days)
+    const TOLERANCE_DAYS = 5;
+    
+    // If no preceding rate found, check if there's a rate within the tolerance window
     if (!matchingRate && matchingRates.length > 0) {
-        matchingRate = matchingRates[0];
-        console.log(`No preceding rate found for ${esisRecord.Provider}, using earliest available rate`);
+        // Find the closest rate (could be after the document date)
+        const closestRate = matchingRates[0];
+        
+        // Calculate the difference in days
+        const diffTime = Math.abs(closestRate.effective_at.getTime() - documentDate.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        // If within tolerance window, use this rate
+        if (diffDays <= TOLERANCE_DAYS) {
+            matchingRate = closestRate;
+            console.log(`Using swap rate from ${closestRate.effective_at.toISOString().split('T')[0]} for ${esisRecord.Provider} document dated ${documentDate.toISOString().split('T')[0]} (${diffDays} days difference)`);
+        } else {
+            // Track missing date ranges
+            const yearMonth = documentDate.toISOString().substring(0, 7); // YYYY-MM format
+            if (!state.swapRateTracking.missingDateRanges[yearMonth]) {
+                state.swapRateTracking.missingDateRanges[yearMonth] = 0;
+            }
+            state.swapRateTracking.missingDateRanges[yearMonth]++;
+            
+            // Log the exclusion
+            console.log(`No suitable swap rate found for ${esisRecord.Provider} on ${documentDate.toISOString().split('T')[0]}, excluding from analysis`);
+            state.swapRateTracking.excludedRecords++;
+            state.swapRateTracking.excludedLoanAmount += (esisRecord.Loan || 0);
+            return null;
+        }
+    }
+    
+    // Log a few examples of date comparisons for verification
+    if (Math.random() < 0.001) { // Log approximately 0.1% of comparisons
+        console.log('Date comparison example:', {
+            Provider: esisRecord.Provider,
+            DaysDifference: matchingRate ? 
+                Math.round((documentDate.getTime() - matchingRate.effective_at.getTime()) / (1000 * 60 * 60 * 24)) : 
+                'N/A'
+        });
     }
     
     return matchingRate;
 }
 
 function calculatePremiumOverSwap(esisRecord, swapRate) {
-    if (!swapRate) return null;
+    if (!swapRate) {
+        return null;
+    }
     
-    // Convert InitialRate from percentage to decimal if needed
-    const initialRateDecimal = typeof esisRecord.InitialRate === 'number' ? 
-        esisRecord.InitialRate / 100 : parseFloat(esisRecord.InitialRate) / 100;
+    // Determine which rate field to use from ESIS record
+    let esisRateValue = null;
+    
+    // Check different possible rate fields in order of preference
+    if (esisRecord.Rate !== undefined && esisRecord.Rate !== null) {
+        esisRateValue = esisRecord.Rate;
+    } else if (esisRecord.InitialRate !== undefined && esisRecord.InitialRate !== null) {
+        esisRateValue = esisRecord.InitialRate;
+    } else {
+        console.warn(`No rate field found for ${esisRecord.Provider}`);
+        return null;
+    }
+    
+    // Normalize the ESIS rate (handle percentage vs decimal format)
+    let esisRate;
+    if (typeof esisRateValue === 'string') {
+        // Remove any % signs and convert to number
+        esisRateValue = esisRateValue.replace('%', '');
+        esisRate = parseFloat(esisRateValue);
+    } else {
+        esisRate = parseFloat(esisRateValue);
+    }
+    
+    // Special case handling for Nationwide Building Society
+    // Their rates appear to be stored as 0.XX instead of X.XX%
+    if (esisRecord.Provider === 'Nationwide Building Society' && esisRate < 0.5) {
+        // Convert from 0.XX to 0.0XX (e.g., 0.49 to 0.049 for 4.9%)
+        console.log(`Applying Nationwide rate correction: ${esisRate} -> ${esisRate / 10}`);
+        esisRate = esisRate / 10;
+    }
+    // Check if the ESIS rate is likely in percentage format (e.g., 3.99 instead of 0.0399)
+    // Most mortgage rates are between 0.5% and 15%
+    else if (esisRate > 0.5 && esisRate < 15) {
+        // Rate is already in percentage format (e.g., 3.99 for 3.99%)
+        // Convert to decimal for calculation
+        esisRate = esisRate / 100;
+    } else if (esisRate > 15) {
+        // This is likely an error or a special case
+        console.warn(`Unusually high ESIS rate detected: ${esisRate} for ${esisRecord.Provider}`);
+    }
+    
+    // Get and normalize the swap rate value
+    let swapRateValue;
+    if (typeof swapRate.rate === 'string') {
+        swapRateValue = parseFloat(swapRate.rate);
+    } else {
+        swapRateValue = swapRate.rate;
+    }
+    
+    // Validate the values
+    if (isNaN(esisRate)) {
+        console.warn(`Invalid ESIS rate for ${esisRecord.Provider}: ${esisRateValue} (type: ${typeof esisRateValue})`);
+        return null;
+    }
+    
+    if (isNaN(swapRateValue)) {
+        console.warn(`Invalid swap rate for ${esisRecord.Provider}: ${swapRate.rate} (type: ${typeof swapRate.rate})`);
+        return null;
+    }
     
     // Calculate premium in basis points (100 basis points = 1%)
-    return Math.round((initialRateDecimal - swapRate.rate) * 10000);
+    // Both rates should be in decimal format (e.g., 0.0399 for 3.99%)
+    const premiumBps = Math.round((esisRate - swapRateValue) * 10000);
+    
+    // Log extreme values for investigation
+    if (premiumBps > 300 || premiumBps < -30) {
+        console.log('PREMIUM INVESTIGATION:', {
+            Provider: esisRecord.Provider,
+            LoanAmount: esisRecord.Loan,
+            DocumentDate: esisRecord.DocumentDate instanceof Date ? esisRecord.DocumentDate.toISOString() : esisRecord.DocumentDate,
+            ESISRateOriginal: esisRateValue,
+            ESISRateNormalized: esisRate,
+            ESISRateType: typeof esisRateValue,
+            SwapRateOriginal: swapRate.rate,
+            SwapRateNormalized: swapRateValue,
+            SwapRateType: typeof swapRate.rate,
+            SwapRateDate: swapRate.effective_at instanceof Date ? swapRate.effective_at.toISOString() : swapRate.effective_at,
+            PremiumBps: premiumBps,
+            ProductTerm: esisRecord.TieInPeriod || 60,
+            SwapProductTerm: swapRate.product_term_in_months,
+            Calculation: `(${esisRate} - ${swapRateValue}) * 10000 = ${premiumBps}`
+        });
+    }
+    
+    return premiumBps;
 }
 
 function assignPremiumBand(premiumBps) {
     if (premiumBps === null) return 'Unknown';
+    
+    // Add validation for extreme negative values
+    // Limit to a reasonable range (-60 to +560 bps)
+    if (premiumBps < -60) {
+        console.warn(`Unusually low premium detected: ${premiumBps}bps. Capping at -60bps.`);
+        premiumBps = -60;
+    } else if (premiumBps > 560) {
+        console.warn(`Unusually high premium detected: ${premiumBps}bps. Capping at 560bps.`);
+        premiumBps = 560;
+    }
     
     // Floor to nearest 20bps band
     const lowerBound = Math.floor(premiumBps / 20) * 20;
@@ -548,6 +846,9 @@ function extractMonth(date) {
 
 function aggregateByPremiumBandAndMonth(records) {
     try {
+        // DEBUG: Calculate simple sum of all loans before aggregation
+        const preAggregationTotal = records.reduce((sum, record) => sum + (record.Loan || 0), 0);
+        console.log('DEBUG - Total loan amount before aggregation:', preAggregationTotal.toLocaleString());
         if (!records || !Array.isArray(records) || records.length === 0) {
             console.warn('No valid records to aggregate');
             return {
@@ -607,19 +908,71 @@ function aggregateByPremiumBandAndMonth(records) {
             aggregatedData.totals.byMonth[month] = 0;
         });
         
+        // DEBUG: Create a tracking object to detect potential double-counting
+        const loanTracking = {
+            byBandMonth: 0,
+            byPremiumBand: 0,
+            byMonth: 0,
+            overall: 0
+        };
+        
         // Aggregate loan amounts
-        records.forEach(record => {
+        records.forEach((record, idx) => {
             if (record.PremiumBand && record.Month && record.Loan) {
                 // Make sure the band and month exist in our structure
                 if (aggregatedData.data[record.PremiumBand] && 
                     months.includes(record.Month)) {
                     
+                    // DEBUG: Track the first few records for detailed analysis
+                    const isTrackedRecord = idx < 3;
+                    if (isTrackedRecord) {
+                        console.log(`DEBUG - Aggregating record ${idx}: Loan=${record.Loan}, PremiumBand=${record.PremiumBand}, Month=${record.Month}`);
+                    }
+                    
                     aggregatedData.data[record.PremiumBand][record.Month] += record.Loan;
+                    loanTracking.byBandMonth += record.Loan;
+                    
                     aggregatedData.totals.byPremiumBand[record.PremiumBand] += record.Loan;
+                    loanTracking.byPremiumBand += record.Loan;
+                    
                     aggregatedData.totals.byMonth[record.Month] += record.Loan;
+                    loanTracking.byMonth += record.Loan;
+                    
                     aggregatedData.totals.overall += record.Loan;
+                    loanTracking.overall += record.Loan;
+                    
+                    if (isTrackedRecord) {
+                        console.log(`DEBUG - After adding record ${idx}: byBandMonth=${aggregatedData.data[record.PremiumBand][record.Month]}, overall=${aggregatedData.totals.overall}`);
+                    }
                 }
             }
+        });
+        
+        // DEBUG: Log the tracking totals to identify potential double-counting
+        console.log('DEBUG - Aggregation tracking totals:', {
+            byBandMonth: loanTracking.byBandMonth.toLocaleString(),
+            byPremiumBand: loanTracking.byPremiumBand.toLocaleString(),
+            byMonth: loanTracking.byMonth.toLocaleString(),
+            overall: loanTracking.overall.toLocaleString()
+        });
+        
+        // DEBUG: Verify the overall total matches our expectation
+        console.log('DEBUG - Final aggregated overall total:', aggregatedData.totals.overall.toLocaleString());
+        
+        // DEBUG: Calculate sum of premium band totals as a verification
+        const sumOfBandTotals = Object.values(aggregatedData.totals.byPremiumBand).reduce((sum, val) => sum + val, 0);
+        console.log('DEBUG - Sum of all premium band totals:', sumOfBandTotals.toLocaleString());
+        
+        // DEBUG: Calculate sum of month totals as a verification
+        const sumOfMonthTotals = Object.values(aggregatedData.totals.byMonth).reduce((sum, val) => sum + val, 0);
+        console.log('DEBUG - Sum of all month totals:', sumOfMonthTotals.toLocaleString());
+        
+        // DEBUG: Check if these sums match the overall total
+        console.log('DEBUG - Do totals match?', {
+            'overall === sumOfBandTotals': aggregatedData.totals.overall === sumOfBandTotals,
+            'overall === sumOfMonthTotals': aggregatedData.totals.overall === sumOfMonthTotals,
+            'difference (overall - bandTotals)': aggregatedData.totals.overall - sumOfBandTotals,
+            'difference (overall - monthTotals)': aggregatedData.totals.overall - sumOfMonthTotals
         });
         
         return aggregatedData;
@@ -659,6 +1012,14 @@ function renderTable() {
         
         // Prepare table data
         const tableData = prepareTableData(currentAggregatedData);
+        
+        // DEBUG: Log the total amount being displayed in the table
+        if (tableData && tableData.length > 0) {
+            const totalRow = tableData.find(row => row.premiumBand === "Total");
+            if (totalRow) {
+                console.log('DEBUG - Total amount being displayed in table:', totalRow.total.toLocaleString());
+            }
+        }
         
         // Define table columns
         const tableColumns = [
@@ -700,7 +1061,15 @@ function renderTable() {
                 symbol: "£"
             },
             headerSort: false,
-            bottomCalc: "sum",
+            // Use a custom bottomCalc function to prevent double-counting
+            // Instead of summing all values (which would include the Total row),
+            // we'll just return the value from the Total row directly
+            bottomCalc: function(values, data, calcParams) {
+                // Find the Total row
+                const totalRow = data.find(row => row.premiumBand === "Total");
+                // Return its total value directly
+                return totalRow ? totalRow.total : 0;
+            },
             bottomCalcFormatter: "money",
             bottomCalcFormatterParams: {
                 precision: 0,
@@ -994,8 +1363,17 @@ function applyFilters() {
         // Log filtering results
         console.log(`Filtering complete: ${state.filteredData.length} records match the criteria out of ${state.esisData.length} total records`);
         
+        // DEBUG: Calculate total loan amount after filtering
+        const postFilterTotal = state.filteredData.reduce((sum, record) => sum + (record.Loan || 0), 0);
+        console.log('DEBUG - Total loan amount after filtering:', postFilterTotal.toLocaleString());
+        
         // Process filtered data
         state.processedData = aggregateByPremiumBandAndMonth(state.filteredData);
+        
+        // DEBUG: Log the total loan amount in the processed data
+        if (state.processedData && state.processedData.totals) {
+            console.log('DEBUG - Total loan amount in processed data:', state.processedData.totals.overall.toLocaleString());
+        }
         
         // Update table
         renderTable();
@@ -1062,8 +1440,25 @@ function filterData(data) {
                      return false;
                 }
             } else if (record.PremiumOverSwap === null || record.PremiumOverSwap === undefined) {
-                 // Potentially skip or handle records where PremiumOverSwap is not defined but PremiumBand might be if derived differently
+                // Potentially skip or handle records where PremiumOverSwap is not defined but PremiumBand might be if derived differently
+                // If we have a valid PremiumBand, let's keep the record
+                if (record.PremiumBand) {
+                    // Extract the lower bound of the premium band
+                    const bandLowerBound = parseInt(record.PremiumBand.split('-')[0]);
+                    if (!isNaN(bandLowerBound)) {
+                        // Check if it falls within the filter range
+                        if (bandLowerBound < state.filters.premiumRange[0] || bandLowerBound > state.filters.premiumRange[1]) {
+                            return false;
+                        }
+                        // Otherwise keep it
+                        return true;
+                    }
+                }
             } else if (record.PremiumOverSwap < state.filters.premiumRange[0] || record.PremiumOverSwap > state.filters.premiumRange[1]) {
+                // DIAGNOSTIC: Check if we're filtering out 500-520 band records
+                if (record.PremiumBand === '500-520') {
+                    console.log(`DIAGNOSTIC - Filtering out 500-520 record with PremiumOverSwap=${record.PremiumOverSwap}, filter range: [${state.filters.premiumRange[0]}-${state.filters.premiumRange[1]}]`);
+                }
                 return false;
             }
             
@@ -1081,7 +1476,7 @@ function filterData(data) {
                 }
             }
             
-            console.log(`filterData PASSED - Record: Month=${record.Month}, PremiumBand=${record.PremiumBand}, Loan=${record.Loan}, Provider=${record.Provider}`);
+            // Debug statement removed to improve performance
             return true;
         } catch (error) {
             console.error('Error filtering record:', error, record);
@@ -1165,66 +1560,222 @@ function resetMarketShareTable() {
     elements.marketShareTable.innerHTML = '';
 }
 
-// --- MARKET SHARE: Apply market share analysis ---
-function applyMarketShareAnalysis() {
-    // Get selected bands
-    const selectedBands = Array.from(elements.premiumBandSelect.selectedOptions).map(opt => opt.value);
-    state.marketShareFilters.selectedPremiumBands = selectedBands;
-    // Aggregate and render
-    const data = aggregateLenderMarketShare(selectedBands);
-    state.lenderMarketShareData = data;
-    renderLenderMarketShareTable(data, selectedBands);
-}
-
 // --- MARKET SHARE: Aggregate data by lender and premium band ---
 function aggregateLenderMarketShare(selectedBands) {
+    // Temporarily adjust premium range to include 500-520 band if it's selected
+    const originalPremiumRange = [...state.filters.premiumRange];
+    
+    // If 500-520 band is selected, ensure the premium range includes it
+    if (selectedBands.includes('500-520') && state.filters.premiumRange[1] < 520) {
+        console.log(`DIAGNOSTIC - Adjusting premium range from [${state.filters.premiumRange[0]}-${state.filters.premiumRange[1]}] to [${state.filters.premiumRange[0]}-520] to include 500-520 band`);
+        state.filters.premiumRange[1] = 520;
+    }
+    
     // Filter data by current filters (date, product, etc)
     const filtered = filterData(state.esisData);
+    
+    // Restore original premium range
+    state.filters.premiumRange = originalPremiumRange;
+    
+    // DIAGNOSTIC: Check for 500-520 band records in the filtered data
+    const highPremiumRecords = filtered.filter(item => item.PremiumBand === '500-520');
+    console.log(`DIAGNOSTIC - aggregateLenderMarketShare: Records in 500-520 band after filtering: ${highPremiumRecords.length}`);
+    
+    if (highPremiumRecords.length > 0) {
+        // Calculate total loan amount in this band
+        const totalLoanAmount = highPremiumRecords.reduce((sum, record) => sum + (record.Loan || 0), 0);
+        console.log(`DIAGNOSTIC - aggregateLenderMarketShare: Total loan amount in 500-520 band: £${totalLoanAmount.toLocaleString()}`);
+    }
+    
+    // DIAGNOSTIC: Check if 500-520 band is in the selected bands
+    console.log(`DIAGNOSTIC - aggregateLenderMarketShare: Is 500-520 band selected: ${selectedBands.includes('500-520')}`);
+    console.log(`DIAGNOSTIC - aggregateLenderMarketShare: Selected bands:`, selectedBands);
+    
     // Get unique lenders
     const lenders = [...new Set(filtered.map(r => r.BaseLender || r.Provider).filter(Boolean))].sort();
+    
     // Build structure: { lender: { band1: {amount, pct}, band2: ...}, ... }
     const bandTotals = {};
     selectedBands.forEach(band => bandTotals[band] = 0);
+    
     const lenderData = {};
     lenders.forEach(lender => {
         lenderData[lender] = {};
-        selectedBands.forEach(band => lenderData[lender][band] = 0);
+        selectedBands.forEach(band => {
+            lenderData[lender][band] = 0;
+            lenderData[lender][band + '_pct'] = 0;
+        });
+        lenderData[lender].Total = 0;
+        lenderData[lender].Total_pct = 0;
     });
+    
+    // DIAGNOSTIC: Check if 500-520 band is in the bandTotals
+    console.log(`DIAGNOSTIC - aggregateLenderMarketShare: Is 500-520 band in bandTotals: ${bandTotals.hasOwnProperty('500-520')}`);
+    
     // Aggregate
+    let highPremiumCount = 0;
     filtered.forEach(r => {
         const lender = r.BaseLender || r.Provider;
         const band = r.PremiumBand;
+        
+        // DIAGNOSTIC: Count records in 500-520 band that have a lender
+        if (band === '500-520' && lender) {
+            highPremiumCount++;
+            console.log(`DIAGNOSTIC - 500-520 band record:`, {
+                Provider: r.Provider,
+                BaseLender: r.BaseLender,
+                Loan: r.Loan,
+                PremiumBand: r.PremiumBand
+            });
+        }
+        
         if (lender && selectedBands.includes(band)) {
             lenderData[lender][band] += r.Loan || 0;
             bandTotals[band] += r.Loan || 0;
         }
     });
-    // Compute total per lender and grand total
-    let marketGrandTotal = 0;
-    lenders.forEach(lender => {
-        lenderData[lender].Total = selectedBands.reduce((sum, band) => sum + lenderData[lender][band], 0);
-        marketGrandTotal += lenderData[lender].Total;
+    
+    // DIAGNOSTIC: Report on 500-520 band records with lenders
+    console.log(`DIAGNOSTIC - aggregateLenderMarketShare: Records in 500-520 band with lenders: ${highPremiumCount}`);
+    if (bandTotals.hasOwnProperty('500-520')) {
+        console.log(`DIAGNOSTIC - aggregateLenderMarketShare: Total in bandTotals for 500-520: £${bandTotals['500-520'].toLocaleString()}`);
+    }
+    
+    // Calculate totals and percentages
+    let overallTotal = 0;
+    selectedBands.forEach(band => {
+        overallTotal += bandTotals[band];
     });
-    // Compute %
+    
+    // Calculate percentages for each lender and band
     lenders.forEach(lender => {
+        let lenderTotal = 0;
+        
         selectedBands.forEach(band => {
-            lenderData[lender][band + '_pct'] = bandTotals[band] > 0 ? (lenderData[lender][band] / bandTotals[band]) * 100 : 0;
+            lenderTotal += lenderData[lender][band];
+            
+            // Calculate percentage of this band's total
+            if (bandTotals[band] > 0) {
+                lenderData[lender][band + '_pct'] = (lenderData[lender][band] / bandTotals[band]) * 100;
+            }
         });
-        lenderData[lender].Total_pct = marketGrandTotal > 0 ? (lenderData[lender].Total / marketGrandTotal) * 100 : 0;
+        
+        lenderData[lender].Total = lenderTotal;
+        
+        // Calculate percentage of overall total
+        if (overallTotal > 0) {
+            lenderData[lender].Total_pct = (lenderTotal / overallTotal) * 100;
+        }
     });
-    // Prepare summary row
+    
+    // Create summary row for total market
     const summary = { Lender: 'Total Market' };
     selectedBands.forEach(band => {
         summary[band] = bandTotals[band];
-        summary[band + '_pct'] = 100;
+        summary[band + '_pct'] = 100; // Always 100% of itself
     });
-    summary.Total = marketGrandTotal;
-    summary.Total_pct = 100;
-    return { lenders, lenderData, bandTotals, marketGrandTotal, summary };
+    summary.Total = overallTotal;
+    summary.Total_pct = 100; // Always 100% of itself
+    
+    return {
+        lenders,
+        lenderData,
+        bandTotals,
+        overallTotal,
+        summary
+    };
+}
+
+function applyMarketShareAnalysis() {
+    // Get selected bands
+    const selectedBands = Array.from(elements.premiumBandSelect.selectedOptions).map(opt => opt.value);
+    
+    // DIAGNOSTIC: Check if 500-520 band is selected
+    console.log('DIAGNOSTIC - Selected premium bands for market share analysis:', selectedBands);
+    console.log('DIAGNOSTIC - 500-520 band is selected:', selectedBands.includes('500-520'));
+    
+    // Filter data by current filters (date, product, etc)
+    const data = filterData(state.esisData);
+    
+    // DIAGNOSTIC: Check for records in the 500-520 band
+    const highPremiumRecords = data.filter(item => item.PremiumBand === '500-520');
+    console.log(`DIAGNOSTIC - Records in 500-520 band after filtering: ${highPremiumRecords.length}`);
+    
+    if (highPremiumRecords.length > 0) {
+        // Calculate total loan amount in this band
+        const totalLoanAmount = highPremiumRecords.reduce((sum, record) => sum + (record.Loan || 0), 0);
+        console.log(`DIAGNOSTIC - Total loan amount in 500-520 band: £${totalLoanAmount.toLocaleString()}`);
+        
+        // Group by provider
+        const providerSummary = {};
+        highPremiumRecords.forEach(record => {
+            const provider = record.Provider || 'Unknown';
+            if (!providerSummary[provider]) {
+                providerSummary[provider] = {
+                    count: 0,
+                    totalLoan: 0
+                };
+            }
+            providerSummary[provider].count++;
+            providerSummary[provider].totalLoan += (record.Loan || 0);
+        });
+        
+        // Show top providers
+        console.log('DIAGNOSTIC - Provider summary for 500-520 band:');
+        Object.entries(providerSummary)
+            .sort((a, b) => b[1].totalLoan - a[1].totalLoan)
+            .forEach(([provider, stats]) => {
+                console.log(`${provider}: ${stats.count} records, £${stats.totalLoan.toLocaleString()}`);
+            });
+    }
+    
+    state.marketShareFilters.selectedPremiumBands = selectedBands;
+    // Aggregate and render
+    const dataForRender = aggregateLenderMarketShare(selectedBands);
+    state.lenderMarketShareData = dataForRender;
+    
+    // DIAGNOSTIC: Check if 500-520 band data is in the aggregated data
+    if (dataForRender.bandTotals && dataForRender.bandTotals['500-520']) {
+        console.log(`DIAGNOSTIC - 500-520 band total in aggregated data: £${dataForRender.bandTotals['500-520'].toLocaleString()}`);
+    } else {
+        console.log('DIAGNOSTIC - 500-520 band is missing from aggregated data bandTotals');
+    }
+    
+    renderLenderMarketShareTable(dataForRender, selectedBands);
 }
 
 // --- MARKET SHARE: Render Tabulator table ---
 function renderLenderMarketShareTable(data, selectedBands) {
+    // DIAGNOSTIC: Check the structure of the data object
+    console.log('DIAGNOSTIC - renderLenderMarketShareTable input data:', typeof data);
+    
+    // Check if 500-520 band is in the selected bands
+    const has500520Band = selectedBands.includes('500-520');
+    console.log(`DIAGNOSTIC - 500-520 band is selected in render function: ${has500520Band}`);
+    
+    // Check if 500-520 band data exists in the bandTotals
+    if (data.bandTotals && data.bandTotals['500-520'] !== undefined) {
+        console.log(`DIAGNOSTIC - 500-520 band total in render function: £${data.bandTotals['500-520'].toLocaleString()}`);
+    } else {
+        console.log('DIAGNOSTIC - 500-520 band is missing from bandTotals in render function');
+    }
+    
+    // Check lender data for 500-520 band
+    if (has500520Band && data.lenders && data.lenderData) {
+        console.log('DIAGNOSTIC - Sample lender data for 500-520 band:');
+        let count = 0;
+        for (const lender of data.lenders.slice(0, 3)) {
+            if (data.lenderData[lender] && data.lenderData[lender]['500-520'] !== undefined) {
+                console.log(`${lender}: £${data.lenderData[lender]['500-520'].toLocaleString()}`);
+                count++;
+            }
+        }
+        if (count === 0) {
+            console.log('No lenders have data for the 500-520 band');
+        }
+    }
+    
+    // Check if table already exists and destroy it
     if (state.marketShareTable) {
         state.marketShareTable.destroy();
     }
