@@ -6,6 +6,7 @@ const state = {
     swapRatesData: null,
     processedData: null,
     table: null,
+    marketShareTable: null,
     filters: {
         dateRange: [null, null],
         lenders: [],
@@ -13,8 +14,12 @@ const state = {
         productTypes: [],
         purchaseTypes: []
     },
+    marketShareFilters: {
+        selectedPremiumBands: []
+    },
     totalMarketByPremiumBand: {}, // For % of market calculation
-    overallTotalMarket: 0       // For overall % of market calculation
+    overallTotalMarket: 0,      // For overall % of market calculation
+    lenderMarketShareData: null  // For lender market share analysis
 };
 
 // DOM Elements
@@ -38,6 +43,13 @@ const elements = {
     premiumMax: document.getElementById('premium-max'),
     productType: document.getElementById('product-type'),
     purchaseType: document.getElementById('purchase-type'),
+    // Market share analysis elements
+    marketShareSection: document.getElementById('market-share-section'),
+    premiumBandSelect: document.getElementById('premium-band-select'),
+    applyMarketShareBtn: document.getElementById('apply-market-share'),
+    marketShareTable: document.getElementById('market-share-table'),
+    exportMarketShareBtn: document.getElementById('export-market-share-btn'),
+    // Error elements
     errorContainer: document.getElementById('error-container'),
     errorText: document.getElementById('error-text'),
     dismissError: document.getElementById('dismiss-error')
@@ -55,6 +67,10 @@ function initializeApp() {
     elements.applyFiltersBtn.addEventListener('click', applyFilters);
     elements.resetFiltersBtn.addEventListener('click', resetFilters);
     elements.dismissError.addEventListener('click', dismissError);
+    
+    // Market share analysis event listeners
+    elements.applyMarketShareBtn.addEventListener('click', applyMarketShareAnalysis);
+    elements.exportMarketShareBtn.addEventListener('click', exportMarketShareData);
     
     // Initialize filter controls
     elements.premiumMin.addEventListener('change', validatePremiumRange);
@@ -182,7 +198,15 @@ async function processData() {
         // Update UI with results
         updateFilters();
         renderTable();
-        
+
+        // --- Ensure premium bands are always populated after data load ---
+        if (state.processedData && state.processedData.premiumBands) {
+            populatePremiumBandSelect(state.processedData.premiumBands);
+            elements.marketShareSection.classList.remove('hidden');
+        } else {
+            elements.marketShareSection.classList.add('hidden');
+        }
+        resetMarketShareTable();
         // Show filters and results sections
         elements.filtersSection.classList.remove('hidden');
         elements.resultsSection.classList.remove('hidden');
@@ -616,6 +640,13 @@ function aggregateByPremiumBandAndMonth(records) {
 
 // Table Rendering Functions
 function renderTable() {
+    // Show/hide market share section in sync with results
+    if (state.processedData && state.processedData.premiumBands && state.processedData.premiumBands.length > 0) {
+        elements.marketShareSection.classList.remove('hidden');
+    } else {
+        elements.marketShareSection.classList.add('hidden');
+    }
+
     try {
         // Check if we have processed data
         const currentAggregatedData = state.processedData; // Use filtered or full data
@@ -968,7 +999,15 @@ function applyFilters() {
         
         // Update table
         renderTable();
-        
+
+        // --- Ensure premium bands are always populated after filters are applied ---
+        if (state.processedData && state.processedData.premiumBands) {
+            populatePremiumBandSelect(state.processedData.premiumBands);
+            elements.marketShareSection.classList.remove('hidden');
+        } else {
+            elements.marketShareSection.classList.add('hidden');
+        }
+        resetMarketShareTable();
         // Update charts
         // updateCharts();
         
@@ -1086,6 +1125,14 @@ function resetFilters() {
         
         // Update table
         renderTable();
+        // --- MARKET SHARE: Populate dropdown and render section if data ---
+        if (state.processedData && state.processedData.premiumBands) {
+            populatePremiumBandSelect(state.processedData.premiumBands);
+            elements.marketShareSection.classList.remove('hidden');
+        } else {
+            elements.marketShareSection.classList.add('hidden');
+        }
+        resetMarketShareTable();
         
         console.log('Filters reset successfully');
         showLoading(false);
@@ -1093,6 +1140,169 @@ function resetFilters() {
         console.error('Error resetting filters:', error);
         showError(`Error resetting filters: ${error.message}`);
         showLoading(false);
+    }
+}
+
+// --- MARKET SHARE: Populate premium band multi-select ---
+function populatePremiumBandSelect(bands) {
+    elements.premiumBandSelect.innerHTML = '';
+    bands.forEach(band => {
+        const option = document.createElement('option');
+        option.value = band;
+        option.textContent = band;
+        elements.premiumBandSelect.appendChild(option);
+    });
+}
+
+// --- MARKET SHARE: Reset market share table and filters ---
+function resetMarketShareTable() {
+    state.marketShareFilters.selectedPremiumBands = [];
+    if (state.marketShareTable) {
+        state.marketShareTable.destroy();
+        state.marketShareTable = null;
+    }
+    elements.premiumBandSelect.selectedIndex = -1;
+    elements.marketShareTable.innerHTML = '';
+}
+
+// --- MARKET SHARE: Apply market share analysis ---
+function applyMarketShareAnalysis() {
+    // Get selected bands
+    const selectedBands = Array.from(elements.premiumBandSelect.selectedOptions).map(opt => opt.value);
+    state.marketShareFilters.selectedPremiumBands = selectedBands;
+    // Aggregate and render
+    const data = aggregateLenderMarketShare(selectedBands);
+    state.lenderMarketShareData = data;
+    renderLenderMarketShareTable(data, selectedBands);
+}
+
+// --- MARKET SHARE: Aggregate data by lender and premium band ---
+function aggregateLenderMarketShare(selectedBands) {
+    // Filter data by current filters (date, product, etc)
+    const filtered = filterData(state.esisData);
+    // Get unique lenders
+    const lenders = [...new Set(filtered.map(r => r.BaseLender || r.Provider).filter(Boolean))].sort();
+    // Build structure: { lender: { band1: {amount, pct}, band2: ...}, ... }
+    const bandTotals = {};
+    selectedBands.forEach(band => bandTotals[band] = 0);
+    const lenderData = {};
+    lenders.forEach(lender => {
+        lenderData[lender] = {};
+        selectedBands.forEach(band => lenderData[lender][band] = 0);
+    });
+    // Aggregate
+    filtered.forEach(r => {
+        const lender = r.BaseLender || r.Provider;
+        const band = r.PremiumBand;
+        if (lender && selectedBands.includes(band)) {
+            lenderData[lender][band] += r.Loan || 0;
+            bandTotals[band] += r.Loan || 0;
+        }
+    });
+    // Compute total per lender and grand total
+    let marketGrandTotal = 0;
+    lenders.forEach(lender => {
+        lenderData[lender].Total = selectedBands.reduce((sum, band) => sum + lenderData[lender][band], 0);
+        marketGrandTotal += lenderData[lender].Total;
+    });
+    // Compute %
+    lenders.forEach(lender => {
+        selectedBands.forEach(band => {
+            lenderData[lender][band + '_pct'] = bandTotals[band] > 0 ? (lenderData[lender][band] / bandTotals[band]) * 100 : 0;
+        });
+        lenderData[lender].Total_pct = marketGrandTotal > 0 ? (lenderData[lender].Total / marketGrandTotal) * 100 : 0;
+    });
+    // Prepare summary row
+    const summary = { Lender: 'Total Market' };
+    selectedBands.forEach(band => {
+        summary[band] = bandTotals[band];
+        summary[band + '_pct'] = 100;
+    });
+    summary.Total = marketGrandTotal;
+    summary.Total_pct = 100;
+    return { lenders, lenderData, bandTotals, marketGrandTotal, summary };
+}
+
+// --- MARKET SHARE: Render Tabulator table ---
+function renderLenderMarketShareTable(data, selectedBands) {
+    if (state.marketShareTable) {
+        state.marketShareTable.destroy();
+    }
+    // Build columns
+    const columns = [
+        { title: 'Lender', field: 'Lender', frozen: true, headerSort: true }
+    ];
+    selectedBands.forEach(band => {
+        columns.push({
+            title: band,
+            field: band,
+            hozAlign: 'right',
+            sorter: 'number',
+            formatter: function(cell) {
+                const amt = cell.getValue();
+                const pct = cell.getRow().getData()[band + '_pct'];
+                // Visual: horizontal bar
+                const barWidth = Math.min(100, pct || 0);
+                return `<div style="display:flex;align-items:center;">
+                    <div style="background:#b3d1ff;height:16px;width:${barWidth}px;max-width:60px;margin-right:4px;"></div>
+                    <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(1) : '0'}%)">
+                        £${amt.toLocaleString()}<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(1) : '0'}%</span>
+                    </span>
+                </div>`;
+            },
+            headerSort: true,
+            tooltip: true
+        });
+    });
+    columns.push({
+        title: 'Total', field: 'Total', hozAlign: 'right', sorter: 'number',
+        formatter: function(cell) {
+            const amt = cell.getValue();
+            const pct = cell.getRow().getData().Total_pct;
+            return `<div style="display:flex;align-items:center;">
+                <div style="background:#b3ffc6;height:16px;width:${Math.min(100, pct || 0)}px;max-width:60px;margin-right:4px;"></div>
+                <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(1) : '0'}%)">
+                    £${amt.toLocaleString()}<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(1) : '0'}%</span>
+                </span>
+            </div>`;
+        },
+        headerSort: true,
+        tooltip: true
+    });
+    // Prepare data rows
+    const rows = data.lenders.map(lender => {
+        const row = { Lender: lender };
+        selectedBands.forEach(band => {
+            row[band] = data.lenderData[lender][band];
+            row[band + '_pct'] = data.lenderData[lender][band + '_pct'];
+        });
+        row.Total = data.lenderData[lender].Total;
+        row.Total_pct = data.lenderData[lender].Total_pct;
+        return row;
+    });
+    // Add summary row
+    rows.push(data.summary);
+    // Render
+    state.marketShareTable = new Tabulator(elements.marketShareTable, {
+        data: rows,
+        columns: columns,
+        layout: 'fitColumns',
+        height: '450px',
+        movableColumns: true,
+        initialSort: [{ column: selectedBands[0], dir: 'desc' }],
+        rowFormatter: function(row) {
+            if (row.getData().Lender === 'Total Market') {
+                row.getElement().style.fontWeight = 'bold';
+                row.getElement().style.backgroundColor = '#eaecee';
+            }
+        }
+    });
+}
+
+// --- MARKET SHARE: Export Function ---
+function exportMarketShareData() {
+    if (state.marketShareTable) {
+        state.marketShareTable.download('csv', 'lender_market_share_analysis.csv');
     }
 }
 

@@ -74,11 +74,26 @@
         </section>
         
         <section class="results hidden" id="results-section">
-            <h2>Results</h2>
+            <h2>Premium Band Analysis</h2>
             <div class="results-actions">
                 <button id="export-btn">Export Data</button>
             </div>
             <div id="results-table"></div>
+        </section>
+        
+        <section class="market-share hidden" id="market-share-section">
+            <h2>Lender Market Share Analysis</h2>
+            <div class="market-share-controls">
+                <div class="filter-group">
+                    <label for="premium-band-select">Select Premium Bands:</label>
+                    <select id="premium-band-select" multiple></select>
+                </div>
+                <button id="apply-market-share">Apply</button>
+            </div>
+            <div class="results-actions">
+                <button id="export-market-share-btn">Export Data</button>
+            </div>
+            <div id="market-share-table"></div>
         </section>
         
         <section id="error-container" class="hidden">
