@@ -12,7 +12,8 @@ const state = {
         lenders: [],
         premiumRange: [0, 500],
         productTypes: [],
-        purchaseTypes: []
+        purchaseTypes: [],
+        ltvRange: 'all' // 'all', 'below-80', or 'above-80'
     },
     marketShareFilters: {
         selectedPremiumBands: []
@@ -43,6 +44,7 @@ const elements = {
     premiumMax: document.getElementById('premium-max'),
     productType: document.getElementById('product-type'),
     purchaseType: document.getElementById('purchase-type'),
+    ltvFilter: document.getElementById('ltv-filter'),
     // Market share analysis elements
     marketShareSection: document.getElementById('market-share-section'),
     premiumBandSelect: document.getElementById('premium-band-select'),
@@ -503,6 +505,27 @@ function mapFieldNames() {
         const preMappingTotal = state.esisData.reduce((sum, record) => sum + (parseFloat(record.Loan) || 0), 0);
         console.log('DEBUG - Total loan amount before field mapping:', preMappingTotal.toLocaleString());
         
+        // DEBUG: Analyze LTV distribution in the dataset
+        let ltvData = {
+            total: 0,
+            count: 0,
+            below80Count: 0,
+            above80Count: 0,
+            missingCount: 0,
+            ltvFields: {}
+        };
+        
+        // Check for LTV field names in the data
+        if (state.esisData.length > 0) {
+            const firstRecord = state.esisData[0];
+            Object.keys(firstRecord).forEach(key => {
+                if (key.toLowerCase().includes('ltv') || key.toLowerCase().includes('loan_to_value') || key.toLowerCase().includes('loan-to-value')) {
+                    ltvData.ltvFields[key] = true;
+                }
+            });
+            console.log('DEBUG - Potential LTV field names found:', Object.keys(ltvData.ltvFields));
+        }
+        
         if (state.esisData.length === 0) {
             console.warn('mapFieldNames called with no ESIS data.');
             return;
@@ -522,6 +545,41 @@ function mapFieldNames() {
             } else if (!mappedRecord.DocumentDate || !(mappedRecord.DocumentDate instanceof Date)) {
                 // console.warn(`Record ${index} has invalid or missing date. Defaulting. Original DocumentDate: ${record.DocumentDate}, Timestamp: ${record.Timestamp}`);
                 mappedRecord.DocumentDate = new Date(); // Defaulting to now, review if null is better
+            }
+            
+            // Standardize LTV field
+            let ltv = null;
+            // Check for various LTV field names
+            if (record.LTV !== undefined) {
+                ltv = parseFloat(record.LTV);
+            } else if (record.Loan_To_Value !== undefined) {
+                ltv = parseFloat(record.Loan_To_Value);
+            } else if (record['Loan-to-Value'] !== undefined) {
+                ltv = parseFloat(record['Loan-to-Value']);
+            } else if (record.loan_to_value !== undefined) {
+                ltv = parseFloat(record.loan_to_value);
+            }
+            
+            // Normalize LTV format (some may be stored as percentage, some as decimal)
+            if (ltv !== null && !isNaN(ltv)) {
+                // If LTV is stored as decimal (e.g., 0.76 instead of 76), convert to percentage
+                if (ltv > 0 && ltv < 1) {
+                    ltv = ltv * 100;
+                }
+                
+                // Update LTV statistics
+                ltvData.total += ltv;
+                ltvData.count++;
+                if (ltv < 80) {
+                    ltvData.below80Count++;
+                } else {
+                    ltvData.above80Count++;
+                }
+                
+                // Store the standardized LTV value
+                mappedRecord.StandardizedLTV = ltv;
+            } else {
+                ltvData.missingCount++;
             }
 
             // 2. Derive Month (handle potential errors from new Date() if source is bad)
@@ -584,8 +642,31 @@ function mapFieldNames() {
         if (state.esisData.length > 0) {
             console.log('DEBUG - Sample mapped loan amounts from first 5 records:');
             state.esisData.slice(0, 5).forEach((record, idx) => {
-                console.log(`Record ${idx}: Mapped Loan=${record.Loan}, Type=${typeof record.Loan}`);
+                console.log(`Record ${idx}: Mapped Loan=${record.Loan}, Type=${typeof record.Loan}, LTV=${record.StandardizedLTV || 'N/A'}`);
             });
+            
+            // Output LTV statistics
+            if (ltvData.count > 0) {
+                const avgLTV = ltvData.total / ltvData.count;
+                console.log('\n======== LTV ANALYSIS REPORT ========');
+                console.log(`Total records with LTV data: ${ltvData.count} (${((ltvData.count / state.esisData.length) * 100).toFixed(2)}% of dataset)`);
+                console.log(`Records missing LTV data: ${ltvData.missingCount} (${((ltvData.missingCount / state.esisData.length) * 100).toFixed(2)}% of dataset)`);
+                console.log(`Average LTV across dataset: ${avgLTV.toFixed(2)}%`);
+                console.log(`Records with LTV < 80%: ${ltvData.below80Count} (${((ltvData.below80Count / ltvData.count) * 100).toFixed(2)}% of LTV data)`);
+                console.log(`Records with LTV >= 80%: ${ltvData.above80Count} (${((ltvData.above80Count / ltvData.count) * 100).toFixed(2)}% of LTV data)`);
+                console.log('====================================\n');
+                
+                // Store LTV stats in state for reference
+                state.ltvStats = {
+                    avgLTV: avgLTV,
+                    below80Percent: (ltvData.below80Count / ltvData.count) * 100,
+                    above80Percent: (ltvData.above80Count / ltvData.count) * 100,
+                    recordsWithLTV: ltvData.count,
+                    recordsMissingLTV: ltvData.missingCount
+                };
+            } else {
+                console.warn('No LTV data found in the dataset. Check field names or data quality.');
+            }
         }
     } catch (error) {
         console.error('Error mapping field names:', error);
@@ -1054,6 +1135,8 @@ function renderTable() {
             }
         }
         
+        // Note about values being in millions removed as requested
+        
         // Define table columns
         const tableColumns = [
             { title: "Premium Band (bps)", field: "premiumBand", headerSort: false, frozen: true }
@@ -1065,12 +1148,13 @@ function renderTable() {
                 title: formatMonth(month),
                 field: month,
                 hozAlign: "right",
-                formatter: "money",
-                formatterParams: {
-                    precision: 0,
-                    thousand: ",",
-                    symbol: "£"
+                formatter: function(cell) {
+                    const value = cell.getValue();
+                    if (value === 0 || !value) return "£0.00m";
+                    const valueInMillions = (value / 1000000).toFixed(2);
+                    return `£${valueInMillions}m`;
                 },
+                formatterParams: {},
                 headerSort: false,
                 cellClick: function(e, cell) {
                     const cellValue = cell.getValue();
@@ -1087,12 +1171,13 @@ function renderTable() {
             title: "Total",
             field: "total",
             hozAlign: "right",
-            formatter: "money",
-            formatterParams: {
-                precision: 0,
-                thousand: ",",
-                symbol: "£"
+            formatter: function(cell) {
+                const value = cell.getValue();
+                if (value === 0 || !value) return "£0.00m";
+                const valueInMillions = (value / 1000000).toFixed(2);
+                return `£${valueInMillions}m`;
             },
+            formatterParams: {},
             headerSort: false,
             // Use a custom bottomCalc function to prevent double-counting
             // Instead of summing all values (which would include the Total row),
@@ -1103,11 +1188,11 @@ function renderTable() {
                 // Return its total value directly
                 return totalRow ? totalRow.total : 0;
             },
-            bottomCalcFormatter: "money",
-            bottomCalcFormatterParams: {
-                precision: 0,
-                thousand: ",",
-                symbol: "£"
+            bottomCalcFormatter: function(cell) {
+                const value = cell.getValue();
+                if (value === 0 || !value) return "£0.00m";
+                const valueInMillions = (value / 1000000).toFixed(2);
+                return `£${valueInMillions}m`;
             }
         });
 
@@ -1119,7 +1204,7 @@ function renderTable() {
             headerSort: false,
             formatter: function(cell, formatterParams, onRendered){
                 const value = cell.getValue();
-                return (typeof value === 'number') ? value.toFixed(1) + '%' : 'N/A';
+                return (typeof value === 'number') ? value.toFixed(2) + '%' : 'N/A';
             },
             bottomCalc: function(values, data, calcParams) {
                 const totalRowData = data.find(d => d.premiumBand === "Total");
@@ -1127,7 +1212,7 @@ function renderTable() {
             },
             bottomCalcFormatter: function(cell, formatterParams, onRendered){
                 const value = cell.getValue();
-                return (typeof value === 'number') ? value.toFixed(1) + '%' : 'N/A';
+                return (typeof value === 'number') ? value.toFixed(2) + '%' : 'N/A';
             }
         });
         
@@ -1164,11 +1249,87 @@ function renderTable() {
 function prepareTableData(currentProcessedData) {
     const tableData = [];
     
+    // Calculate market totals based on current time, product, and purchase filters but without lender filter
+    function calculateMarketTotals() {
+        // Create a custom filter function that only applies date, product, and purchase type filters
+        function marketTotalFilter(record) {
+            // Skip invalid records
+            if (!record || typeof record !== 'object') {
+                return false;
+            }
+            
+            // Filter by date range
+            if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
+                if (!record.Month) { 
+                    return false;
+                }
+                const recordMonth = record.Month; 
+                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
+                    return false;
+                }
+            }
+            
+            // Filter by product type
+            if (state.filters.productTypes.length > 0) {
+                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
+                    return false;
+                }
+            }
+            
+            // Filter by purchase type
+            if (state.filters.purchaseTypes.length > 0) {
+                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
+                    return false;
+                }
+            }
+            
+            // Skip Right to Buy products
+            if (record.PurchaseType === 'Right to Buy') {
+                return false;
+            }
+            
+            return true;
+        }
+        
+        // Apply the filter to get market data
+        const marketData = state.esisData.filter(marketTotalFilter);
+        
+        // Calculate totals by premium band
+        const marketTotals = { byPremiumBand: {}, overall: 0 };
+        
+        marketData.forEach(record => {
+            const band = record.PremiumBand;
+            const loanAmount = record.Loan || 0;
+            
+            if (band) {
+                marketTotals.byPremiumBand[band] = (marketTotals.byPremiumBand[band] || 0) + loanAmount;
+                marketTotals.overall += loanAmount;
+            }
+        });
+        
+        return marketTotals;
+    }
+    
+    // Get market totals based on current filters
+    const marketTotals = calculateMarketTotals();
+    console.log('Market totals based on current time/product/purchase filters:', marketTotals);
+    
     // Add rows for each premium band
     currentProcessedData.premiumBands.forEach(band => {
         const filteredBandTotal = currentProcessedData.totals.byPremiumBand[band] || 0;
-        const marketBandTotal = state.totalMarketByPremiumBand[band] || 0;
-        const percentage = (marketBandTotal > 0) ? (filteredBandTotal / marketBandTotal) * 100 : 0;
+        const marketBandTotal = marketTotals.byPremiumBand[band] || 0;
+        
+        // Calculate percentage - if "All Lenders" is selected, this should be 100%
+        let percentage = 0;
+        if (marketBandTotal > 0) {
+            // Check if "All Lenders" is selected
+            if (state.filters.lenders.length === 0 || 
+                (state.filters.lenders.length === 1 && state.filters.lenders[0] === "-- All Lenders --")) {
+                percentage = 100; // All lenders selected, should be 100%
+            } else {
+                percentage = (filteredBandTotal / marketBandTotal) * 100;
+            }
+        }
 
         const rowData = {
             premiumBand: band,
@@ -1186,8 +1347,19 @@ function prepareTableData(currentProcessedData) {
     
     // Add total row
     const grandFilteredTotal = currentProcessedData.totals.overall || 0;
-    const grandMarketTotal = state.overallTotalMarket || 0;
-    const grandPercentage = (grandMarketTotal > 0) ? (grandFilteredTotal / grandMarketTotal) * 100 : 0;
+    const grandMarketTotal = marketTotals.overall || 0;
+    
+    // Calculate total percentage - if "All Lenders" is selected, this should be 100%
+    let grandPercentage = 0;
+    if (grandMarketTotal > 0) {
+        // Check if "All Lenders" is selected
+        if (state.filters.lenders.length === 0 || 
+            (state.filters.lenders.length === 1 && state.filters.lenders[0] === "-- All Lenders --")) {
+            grandPercentage = 100; // All lenders selected, should be 100%
+        } else {
+            grandPercentage = (grandFilteredTotal / grandMarketTotal) * 100;
+        }
+    }
 
     const totalRow = {
         premiumBand: "Total",
@@ -1336,6 +1508,8 @@ function applyFilters() {
         // Premium range filter removed from UI but maintained in state
         const premiumMin = 0;
         const premiumMax = 500;
+        // Get LTV filter value
+        const ltvRange = elements.ltvFilter.value;
         
         console.log('Total lender options:', elements.lenderFilter.options.length);
         console.log('Selected lender options:', elements.lenderFilter.selectedOptions.length);
@@ -1354,13 +1528,12 @@ function applyFilters() {
         });
         
         // Update state
-        state.filters = {
-            dateRange: [dateStart, dateEnd],
-            lenders: selectedLenders.filter(l => l !== ""), // Remove empty selections (All Lenders option)
-            premiumRange: [premiumMin, premiumMax],
-            productTypes: selectedProductTypes,
-            purchaseTypes: selectedPurchaseTypes
-        };
+        state.filters.dateRange = [dateStart, dateEnd];
+        state.filters.lenders = selectedLenders.filter(l => l !== ""); // Remove empty selections (All Lenders option)
+        state.filters.premiumRange = [premiumMin, premiumMax];
+        state.filters.productTypes = selectedProductTypes;
+        state.filters.purchaseTypes = selectedPurchaseTypes;
+        state.filters.ltvRange = ltvRange;
         
         // Log lender filter state for debugging
         console.log('Lender filter state after processing:', {
@@ -1514,6 +1687,44 @@ function filterData(data) {
                 }
             }
             
+            // Filter by LTV range
+            if (state.filters.ltvRange !== 'all') {
+                // Use our standardized LTV field from mapping
+                let ltv = record.StandardizedLTV;
+                
+                // If LTV is available, filter by it
+                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
+                        // DEBUG: Log some filtered records for verification
+                        if (Math.random() < 0.01) { // Log ~1% of filtered records to avoid console spam
+                            console.log(`LTV Filter: Excluding record with LTV=${ltv}% (≥80%) from below-80 filter`, 
+                                      { provider: record.Provider, loan: record.Loan, ltv: ltv });
+                        }
+                        return false;
+                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                        // DEBUG: Log some filtered records for verification
+                        if (Math.random() < 0.01) { // Log ~1% of filtered records to avoid console spam
+                            console.log(`LTV Filter: Excluding record with LTV=${ltv}% (<80%) from above-80 filter`, 
+                                      { provider: record.Provider, loan: record.Loan, ltv: ltv });
+                        }
+                        return false;
+                    }
+                } else {
+                    // If LTV is not available, we can't filter by it
+                    // For debugging, count how many records are missing LTV data
+                    if (!state.ltvFilterStats) {
+                        state.ltvFilterStats = { missingLtvCount: 0, totalProcessed: 0 };
+                    }
+                    state.ltvFilterStats.missingLtvCount++;
+                    state.ltvFilterStats.totalProcessed++;
+                    
+                    // Log every 100th missing record to avoid console spam
+                    if (state.ltvFilterStats.missingLtvCount % 100 === 0) {
+                        console.log(`LTV Filter: ${state.ltvFilterStats.missingLtvCount} records missing LTV data out of ${state.ltvFilterStats.totalProcessed} processed`);
+                    }
+                }
+            }
+            
             // Debug statement removed to improve performance
             return true;
         } catch (error) {
@@ -1537,6 +1748,9 @@ function resetFilters() {
         Array.from(elements.lenderFilter.options).forEach(option => option.selected = false);
         Array.from(elements.productType.options).forEach(option => option.selected = false);
         Array.from(elements.purchaseType.options).forEach(option => option.selected = false);
+        
+        // Reset LTV filter to 'all'
+        elements.ltvFilter.value = 'all';
         
         // Premium range filter removed from UI but maintained in state
         
@@ -1681,9 +1895,13 @@ function aggregateLenderMarketShare(selectedBands) {
     // Get unique lenders
     const lenders = [...new Set(filtered.map(r => r.BaseLender || r.Provider).filter(Boolean))].sort();
     
-    // Build structure: { lender: { band1: {amount, pct}, band2: ...}, ... }
+    // Build structure: { lender: { band1: {amount, pct, below80, above80, below80_pct, above80_pct}, band2: ...}, ... }
     const bandTotals = {};
-    selectedBands.forEach(band => bandTotals[band] = 0);
+    selectedBands.forEach(band => {
+        bandTotals[band] = 0;
+        bandTotals[band + '_below80'] = 0;
+        bandTotals[band + '_above80'] = 0;
+    });
     
     const lenderData = {};
     lenders.forEach(lender => {
@@ -1691,9 +1909,15 @@ function aggregateLenderMarketShare(selectedBands) {
         selectedBands.forEach(band => {
             lenderData[lender][band] = 0;
             lenderData[lender][band + '_pct'] = 0;
+            lenderData[lender][band + '_below80'] = 0;
+            lenderData[lender][band + '_below80_pct'] = 0;
+            lenderData[lender][band + '_above80'] = 0;
+            lenderData[lender][band + '_above80_pct'] = 0;
         });
         lenderData[lender].Total = 0;
         lenderData[lender].Total_pct = 0;
+        lenderData[lender].Total_below80 = 0;
+        lenderData[lender].Total_above80 = 0;
     });
     
     // DIAGNOSTIC: Check if 500-520 band is in the bandTotals
@@ -1717,8 +1941,24 @@ function aggregateLenderMarketShare(selectedBands) {
         }
         
         if (lender && selectedBands.includes(band)) {
-            lenderData[lender][band] += r.Loan || 0;
-            bandTotals[band] += r.Loan || 0;
+            const loanAmount = r.Loan || 0;
+            lenderData[lender][band] += loanAmount;
+            bandTotals[band] += loanAmount;
+            
+            // Split by LTV
+            const ltv = r.StandardizedLTV;
+            if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+                if (ltv < 80) {
+                    lenderData[lender][band + '_below80'] += loanAmount;
+                    bandTotals[band + '_below80'] += loanAmount;
+                } else {
+                    lenderData[lender][band + '_above80'] += loanAmount;
+                    bandTotals[band + '_above80'] += loanAmount;
+                }
+            } else {
+                // If LTV is not available, we still count it in the total but not in LTV breakdowns
+                console.log(`Record without LTV data in band ${band} for lender ${lender}`);
+            }
         }
     });
     
@@ -1730,28 +1970,60 @@ function aggregateLenderMarketShare(selectedBands) {
     
     // Calculate totals and percentages
     let overallTotal = 0;
+    let overallTotal_below80 = 0;
+    let overallTotal_above80 = 0;
+    
     selectedBands.forEach(band => {
         overallTotal += bandTotals[band];
+        overallTotal_below80 += bandTotals[band + '_below80'];
+        overallTotal_above80 += bandTotals[band + '_above80'];
     });
     
     // Calculate percentages for each lender and band
     lenders.forEach(lender => {
         let lenderTotal = 0;
+        let lenderTotal_below80 = 0;
+        let lenderTotal_above80 = 0;
         
         selectedBands.forEach(band => {
+            // Total for this band
             lenderTotal += lenderData[lender][band];
+            lenderTotal_below80 += lenderData[lender][band + '_below80'];
+            lenderTotal_above80 += lenderData[lender][band + '_above80'];
             
             // Calculate percentage of this band's total
             if (bandTotals[band] > 0) {
                 lenderData[lender][band + '_pct'] = (lenderData[lender][band] / bandTotals[band]) * 100;
             }
+            
+            // Calculate percentage of this band's below 80% LTV total
+            if (bandTotals[band + '_below80'] > 0) {
+                lenderData[lender][band + '_below80_pct'] = (lenderData[lender][band + '_below80'] / bandTotals[band + '_below80']) * 100;
+            }
+            
+            // Calculate percentage of this band's above 80% LTV total
+            if (bandTotals[band + '_above80'] > 0) {
+                lenderData[lender][band + '_above80_pct'] = (lenderData[lender][band + '_above80'] / bandTotals[band + '_above80']) * 100;
+            }
         });
         
         lenderData[lender].Total = lenderTotal;
+        lenderData[lender].Total_below80 = lenderTotal_below80;
+        lenderData[lender].Total_above80 = lenderTotal_above80;
         
         // Calculate percentage of overall total
         if (overallTotal > 0) {
             lenderData[lender].Total_pct = (lenderTotal / overallTotal) * 100;
+        }
+        
+        // Calculate percentage of overall below 80% LTV total
+        if (overallTotal_below80 > 0) {
+            lenderData[lender].Total_below80_pct = (lenderTotal_below80 / overallTotal_below80) * 100;
+        }
+        
+        // Calculate percentage of overall above 80% LTV total
+        if (overallTotal_above80 > 0) {
+            lenderData[lender].Total_above80_pct = (lenderTotal_above80 / overallTotal_above80) * 100;
         }
     });
     
@@ -1760,15 +2032,25 @@ function aggregateLenderMarketShare(selectedBands) {
     selectedBands.forEach(band => {
         summary[band] = bandTotals[band];
         summary[band + '_pct'] = 100; // Always 100% of itself
+        summary[band + '_below80'] = bandTotals[band + '_below80'];
+        summary[band + '_below80_pct'] = 100;
+        summary[band + '_above80'] = bandTotals[band + '_above80'];
+        summary[band + '_above80_pct'] = 100;
     });
     summary.Total = overallTotal;
     summary.Total_pct = 100; // Always 100% of itself
+    summary.Total_below80 = overallTotal_below80;
+    summary.Total_below80_pct = 100;
+    summary.Total_above80 = overallTotal_above80;
+    summary.Total_above80_pct = 100;
     
     return {
         lenders,
         lenderData,
         bandTotals,
         overallTotal,
+        overallTotal_below80,
+        overallTotal_above80,
         summary
     };
 }
@@ -1833,6 +2115,7 @@ function applyMarketShareAnalysis() {
 
 // --- MARKET SHARE: Render Tabulator table ---
 function renderLenderMarketShareTable(data, selectedBands) {
+    // Note about values being in millions removed as requested
     // DIAGNOSTIC: Check the structure of the data object
     console.log('DIAGNOSTIC - renderLenderMarketShareTable input data:', typeof data);
     
@@ -1873,39 +2156,134 @@ function renderLenderMarketShareTable(data, selectedBands) {
     selectedBands.forEach(band => {
         columns.push({
             title: band,
-            field: band,
-            hozAlign: 'right',
-            sorter: 'number',
-            formatter: function(cell) {
-                const amt = cell.getValue();
-                const pct = cell.getRow().getData()[band + '_pct'];
-                // Visual: horizontal bar
-                const barWidth = Math.min(100, pct || 0);
-                return `<div style="display:flex;align-items:center;">
-                    <div style="background:#b3d1ff;height:16px;width:${barWidth}px;max-width:60px;margin-right:4px;"></div>
-                    <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(1) : '0'}%)">
-                        £${amt.toLocaleString()}<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(1) : '0'}%</span>
-                    </span>
-                </div>`;
-            },
-            headerSort: true,
-            tooltip: true
+            columns: [
+                {
+                    title: 'Total',
+                    field: band,
+                    hozAlign: 'right',
+                    sorter: 'number',
+                    formatter: function(cell) {
+                        const amt = cell.getValue();
+                        const pct = cell.getRow().getData()[band + '_pct'];
+                        // Visual: horizontal bar
+                        const barWidth = Math.min(100, pct || 0);
+                        const amtInMillions = (amt / 1000000).toFixed(2);
+                        return `<div style="display:flex;align-items:center;">
+                            <div style="background:#b3d1ff;height:16px;width:${barWidth}px;max-width:60px;margin-right:4px;"></div>
+                            <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
+                                £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                            </span>
+                        </div>`;
+                    },
+                    headerSort: true,
+                    tooltip: true
+                },
+                {
+                    title: '<80% LTV',
+                    field: band + '_below80',
+                    hozAlign: 'right',
+                    sorter: 'number',
+                    formatter: function(cell) {
+                        const amt = cell.getValue();
+                        const pct = cell.getRow().getData()[band + '_below80_pct'];
+                        // Visual: horizontal bar - light blue for below 80% LTV
+                        const barWidth = Math.min(100, pct || 0);
+                        const amtInMillions = (amt / 1000000).toFixed(2);
+                        return `<div style="display:flex;align-items:center;">
+                            <div style="background:#d1e6ff;height:16px;width:${barWidth}px;max-width:60px;margin-right:4px;"></div>
+                            <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
+                                £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                            </span>
+                        </div>`;
+                    },
+                    headerSort: true,
+                    tooltip: true
+                },
+                {
+                    title: '>80% LTV',
+                    field: band + '_above80',
+                    hozAlign: 'right',
+                    sorter: 'number',
+                    formatter: function(cell) {
+                        const amt = cell.getValue();
+                        const pct = cell.getRow().getData()[band + '_above80_pct'];
+                        // Visual: horizontal bar - darker blue for above 80% LTV
+                        const barWidth = Math.min(100, pct || 0);
+                        const amtInMillions = (amt / 1000000).toFixed(2);
+                        return `<div style="display:flex;align-items:center;">
+                            <div style="background:#80b3ff;height:16px;width:${barWidth}px;max-width:60px;margin-right:4px;"></div>
+                            <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
+                                £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                            </span>
+                        </div>`;
+                    },
+                    headerSort: true,
+                    tooltip: true
+                }
+            ]
         });
     });
     columns.push({
-        title: 'Total', field: 'Total', hozAlign: 'right', sorter: 'number',
-        formatter: function(cell) {
-            const amt = cell.getValue();
-            const pct = cell.getRow().getData().Total_pct;
-            return `<div style="display:flex;align-items:center;">
-                <div style="background:#b3ffc6;height:16px;width:${Math.min(100, pct || 0)}px;max-width:60px;margin-right:4px;"></div>
-                <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(1) : '0'}%)">
-                    £${amt.toLocaleString()}<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(1) : '0'}%</span>
-                </span>
-            </div>`;
-        },
-        headerSort: true,
-        tooltip: true
+        title: 'Total',
+        columns: [
+            {
+                title: 'Total',
+                field: 'Total',
+                hozAlign: 'right',
+                sorter: 'number',
+                formatter: function(cell) {
+                    const amt = cell.getValue();
+                    const pct = cell.getRow().getData().Total_pct;
+                    const amtInMillions = (amt / 1000000).toFixed(2);
+                    return `<div style="display:flex;align-items:center;">
+                        <div style="background:#b3ffc6;height:16px;width:${Math.min(100, pct || 0)}px;max-width:60px;margin-right:4px;"></div>
+                        <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
+                            £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                        </span>
+                    </div>`;
+                },
+                headerSort: true,
+                tooltip: true
+            },
+            {
+                title: '<80% LTV',
+                field: 'Total_below80',
+                hozAlign: 'right',
+                sorter: 'number',
+                formatter: function(cell) {
+                    const amt = cell.getValue();
+                    const pct = cell.getRow().getData().Total_below80_pct;
+                    const amtInMillions = (amt / 1000000).toFixed(2);
+                    return `<div style="display:flex;align-items:center;">
+                        <div style="background:#d1ffdb;height:16px;width:${Math.min(100, pct || 0)}px;max-width:60px;margin-right:4px;"></div>
+                        <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
+                            £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                        </span>
+                    </div>`;
+                },
+                headerSort: true,
+                tooltip: true
+            },
+            {
+                title: '>80% LTV',
+                field: 'Total_above80',
+                hozAlign: 'right',
+                sorter: 'number',
+                formatter: function(cell) {
+                    const amt = cell.getValue();
+                    const pct = cell.getRow().getData().Total_above80_pct;
+                    const amtInMillions = (amt / 1000000).toFixed(2);
+                    return `<div style="display:flex;align-items:center;">
+                        <div style="background:#80e699;height:16px;width:${Math.min(100, pct || 0)}px;max-width:60px;margin-right:4px;"></div>
+                        <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
+                            £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                        </span>
+                    </div>`;
+                },
+                headerSort: true,
+                tooltip: true
+            }
+        ]
     });
     // Prepare data rows
     const rows = data.lenders.map(lender => {
@@ -1913,9 +2291,17 @@ function renderLenderMarketShareTable(data, selectedBands) {
         selectedBands.forEach(band => {
             row[band] = data.lenderData[lender][band];
             row[band + '_pct'] = data.lenderData[lender][band + '_pct'];
+            row[band + '_below80'] = data.lenderData[lender][band + '_below80'];
+            row[band + '_below80_pct'] = data.lenderData[lender][band + '_below80_pct'];
+            row[band + '_above80'] = data.lenderData[lender][band + '_above80'];
+            row[band + '_above80_pct'] = data.lenderData[lender][band + '_above80_pct'];
         });
         row.Total = data.lenderData[lender].Total;
         row.Total_pct = data.lenderData[lender].Total_pct;
+        row.Total_below80 = data.lenderData[lender].Total_below80;
+        row.Total_below80_pct = data.lenderData[lender].Total_below80_pct;
+        row.Total_above80 = data.lenderData[lender].Total_above80;
+        row.Total_above80_pct = data.lenderData[lender].Total_above80_pct;
         return row;
     });
     // Add summary row

@@ -47,17 +47,24 @@
                     </div>
                 </div>
                 <div class="filter-group">
-                    <label for="lender-filter">Lender:</label>
-                    <select id="lender-filter" multiple></select>
-                </div>
-                <!-- Premium range filter removed as requested -->
-                <div class="filter-group">
                     <label for="product-type">Product Type:</label>
                     <select id="product-type" multiple></select>
                 </div>
                 <div class="filter-group">
                     <label for="purchase-type">Purchase Type:</label>
                     <select id="purchase-type" multiple></select>
+                </div>
+                <div class="filter-group">
+                    <label for="lender-filter">Lender:</label>
+                    <select id="lender-filter" multiple></select>
+                </div>
+                <div class="filter-group">
+                    <label for="ltv-filter">LTV Range:</label>
+                    <select id="ltv-filter">
+                        <option value="all" selected>All LTVs</option>
+                        <option value="below-80">Below 80%</option>
+                        <option value="above-80">Above 80%</option>
+                    </select>
                 </div>
             </div>
             <div class="filter-actions">
