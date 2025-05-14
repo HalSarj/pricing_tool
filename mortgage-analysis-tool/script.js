@@ -45,6 +45,7 @@ const elements = {
     productType: document.getElementById('product-type'),
     purchaseType: document.getElementById('purchase-type'),
     ltvFilter: document.getElementById('ltv-filter'),
+    productTermFilter: document.getElementById('product-term-filter'),
     // Market share analysis elements
     marketShareSection: document.getElementById('market-share-section'),
     premiumBandSelect: document.getElementById('premium-band-select'),
@@ -79,12 +80,11 @@ function initializeApp() {
     elements.premiumMax.addEventListener('change', validatePremiumRange);
     
     // Add event listener for product term filter
-    document.getElementById('product-term-filter').addEventListener('change', function() {
-        // Log the selected value to verify it's working
-        console.log('Product term filter changed:', this.value);
-        // Apply filters to update the tables
-        applyFilters();
-    });
+    if (elements.productTermFilter) {
+        elements.productTermFilter.addEventListener('change', applyFilters);
+    }
+    
+    // Product term filter event listener will be added after DOM is fully loaded
     
     console.log('Mortgage Market Analysis Tool initialized');
 }
