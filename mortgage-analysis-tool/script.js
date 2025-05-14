@@ -450,24 +450,50 @@ function determinePurchaseType(record) {
 
 // Premium Calculation Functions
 function findMatchingSwapRate(esisRecord) {
-    // Sort swap rates by effective_at date
-    const sortedSwapRates = [...state.swapRatesData]
-        .filter(swap => swap.product_term_in_months === esisRecord.TieInPeriod)
-        .sort((a, b) => a.effective_at - b.effective_at);
+    // Get the document date
+    const documentDate = esisRecord.DocumentDate;
+    
+    // Get the tie-in period (product term) - default to 60 months (5 years) if not available
+    const tieInPeriod = esisRecord.TieInPeriod || 60;
+    
+    // First try to find rates that match the product term
+    let matchingRates = [...state.swapRatesData]
+        .filter(swap => swap.product_term_in_months === tieInPeriod);
+    
+    // If no rates match the product term, try to find rates for a similar term
+    if (matchingRates.length === 0) {
+        // Get all unique product terms
+        const availableTerms = [...new Set(state.swapRatesData.map(swap => swap.product_term_in_months))];
+        
+        // Find the closest term to the mortgage's tie-in period
+        let closestTerm = availableTerms.reduce((closest, term) => {
+            return Math.abs(term - tieInPeriod) < Math.abs(closest - tieInPeriod) ? term : closest;
+        }, availableTerms[0] || 60);
+        
+        // Get rates for the closest term
+        matchingRates = [...state.swapRatesData]
+            .filter(swap => swap.product_term_in_months === closestTerm);
+        
+        console.log(`No exact match for term ${tieInPeriod}, using closest term ${closestTerm} for ${esisRecord.Provider}`);
+    }
+    
+    // Sort by effective date
+    matchingRates.sort((a, b) => a.effective_at - b.effective_at);
     
     // Find the closest preceding swap rate
     let matchingRate = null;
-    for (const swap of sortedSwapRates) {
-        if (swap.effective_at <= esisRecord.DocumentDate) {
+    for (const swap of matchingRates) {
+        if (swap.effective_at <= documentDate) {
             matchingRate = swap;
         } else {
             break;
         }
     }
     
-    // If no matching rate found, use the closest available
-    if (!matchingRate && sortedSwapRates.length > 0) {
-        matchingRate = sortedSwapRates[0];
+    // If no preceding rate found, use the earliest available rate
+    if (!matchingRate && matchingRates.length > 0) {
+        matchingRate = matchingRates[0];
+        console.log(`No preceding rate found for ${esisRecord.Provider}, using earliest available rate`);
     }
     
     return matchingRate;
