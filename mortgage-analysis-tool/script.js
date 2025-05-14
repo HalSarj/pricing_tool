@@ -1220,6 +1220,10 @@ function updateFilters() {
             state.filters.dateRange = [startMonth, endMonth];
         }
         
+        // Set default premium range (even though it's not in the UI anymore)
+        // This ensures the internal state is maintained for filtering
+        state.filters.premiumRange = [0, 500];
+        
         // COMPLETELY REWRITTEN LENDER FILTER HANDLING
         console.log('Updating lender filter with ESIS data records:', state.esisData.length);
         
@@ -1329,8 +1333,9 @@ function applyFilters() {
         // Get filter values
         const dateStart = elements.dateStart.value;
         const dateEnd = elements.dateEnd.value;
-        const premiumMin = parseInt(elements.premiumMin.value) || 0;
-        const premiumMax = parseInt(elements.premiumMax.value) || 500;
+        // Premium range filter removed from UI but maintained in state
+        const premiumMin = 0;
+        const premiumMax = 500;
         
         console.log('Total lender options:', elements.lenderFilter.options.length);
         console.log('Selected lender options:', elements.lenderFilter.selectedOptions.length);
@@ -1533,9 +1538,7 @@ function resetFilters() {
         Array.from(elements.productType.options).forEach(option => option.selected = false);
         Array.from(elements.purchaseType.options).forEach(option => option.selected = false);
         
-        // Reset premium range inputs
-        elements.premiumMin.value = 0;
-        elements.premiumMax.value = 500;
+        // Premium range filter removed from UI but maintained in state
         
         // Reset state
         state.filters = {
@@ -1595,6 +1598,56 @@ function resetMarketShareTable() {
 
 // --- MARKET SHARE: Aggregate data by lender and premium band ---
 function aggregateLenderMarketShare(selectedBands) {
+    // Create a custom filter function that ignores the lender filter
+    // but respects date range, product type, and purchase type filters
+    function customFilterForMarketShare(data) {
+        if (!data || !Array.isArray(data)) {
+            console.error('Invalid data provided to customFilterForMarketShare:', data);
+            return [];
+        }
+        
+        return data.filter(record => {
+            try {
+                // Skip invalid records
+                if (!record || typeof record !== 'object') {
+                    return false;
+                }
+                
+                // Filter by date range
+                if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
+                    if (!record.DocumentDate || !record.Month) { 
+                        return false;
+                    }
+                    const recordMonth = record.Month; 
+                    if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
+                        return false;
+                    }
+                }
+                
+                // Filter by product type
+                if (state.filters.productTypes.length > 0) {
+                    if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
+                        return false;
+                    }
+                }
+                
+                // Filter by purchase type
+                if (state.filters.purchaseTypes.length > 0) {
+                    if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
+                        return false;
+                    }
+                }
+                
+                // Ignore lender filter - include all lenders
+                
+                return true;
+            } catch (error) {
+                console.error('Error in customFilterForMarketShare:', error, record);
+                return false;
+            }
+        });
+    }
+    
     // Temporarily adjust premium range to include 500-520 band if it's selected
     const originalPremiumRange = [...state.filters.premiumRange];
     
@@ -1604,8 +1657,9 @@ function aggregateLenderMarketShare(selectedBands) {
         state.filters.premiumRange[1] = 520;
     }
     
-    // Filter data by current filters (date, product, etc)
-    const filtered = filterData(state.esisData);
+    // Filter data using our custom filter that ignores lender filter
+    const filtered = customFilterForMarketShare(state.esisData);
+    console.log(`Market Share Analysis: Using ${filtered.length} records (ignoring lender filter)`);
     
     // Restore original premium range
     state.filters.premiumRange = originalPremiumRange;
