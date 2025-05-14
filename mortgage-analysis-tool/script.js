@@ -147,6 +147,9 @@ async function processData() {
             throw new Error('Please select both ESIS data and Swap Rates files');
         }
         
+        // Reset market share filters when loading new data
+        state.marketShareFilters.selectedPremiumBands = [];
+        
         // Parse ESIS data
         state.esisData = await parseCSVFile(esisFile);
         
@@ -1773,6 +1776,19 @@ function applyFilters() {
             if (state.marketShareFilters.selectedPremiumBands && 
                 state.marketShareFilters.selectedPremiumBands.length > 0) {
                 updateMarketShareTable();
+            } else {
+                // Auto-select the first premium band if none are selected
+                // This ensures the market share table is displayed without requiring user interaction
+                if (state.processedData.premiumBands && state.processedData.premiumBands.length > 0) {
+                    // Select the first option in the dropdown
+                    if (elements.premiumBandSelect.options.length > 0) {
+                        elements.premiumBandSelect.options[0].selected = true;
+                        // Update the selected bands in state
+                        state.marketShareFilters.selectedPremiumBands = [elements.premiumBandSelect.options[0].value];
+                        // Update the market share table
+                        updateMarketShareTable();
+                    }
+                }
             }
         } else {
             elements.marketShareSection.classList.add('hidden');
@@ -2421,10 +2437,12 @@ function renderLenderMarketShareTable(data, selectedBands) {
                         // Visual: horizontal bar
                         const barWidth = Math.min(100, pct || 0);
                         const amtInMillions = (amt / 1000000).toFixed(2);
+                        // Format the millions with commas
+                        const formattedAmtInMillions = Number(amtInMillions).toLocaleString();
                         return `<div style="display:flex;align-items:center;">
                             <div style="background:#b3d1ff;height:16px;width:${barWidth}px;max-width:60px;margin-right:4px;"></div>
                             <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
-                                £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                                £${formattedAmtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
                             </span>
                         </div>`;
                     },
@@ -2442,10 +2460,12 @@ function renderLenderMarketShareTable(data, selectedBands) {
                         // Visual: horizontal bar - light blue for below 80% LTV
                         const barWidth = Math.min(100, pct || 0);
                         const amtInMillions = (amt / 1000000).toFixed(2);
+                        // Format the millions with commas
+                        const formattedAmtInMillions = Number(amtInMillions).toLocaleString();
                         return `<div style="display:flex;align-items:center;">
                             <div style="background:#d1e6ff;height:16px;width:${barWidth}px;max-width:60px;margin-right:4px;"></div>
                             <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
-                                £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                                £${formattedAmtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
                             </span>
                         </div>`;
                     },
@@ -2463,10 +2483,12 @@ function renderLenderMarketShareTable(data, selectedBands) {
                         // Visual: horizontal bar - darker blue for above 80% LTV
                         const barWidth = Math.min(100, pct || 0);
                         const amtInMillions = (amt / 1000000).toFixed(2);
+                        // Format the millions with commas
+                        const formattedAmtInMillions = Number(amtInMillions).toLocaleString();
                         return `<div style="display:flex;align-items:center;">
                             <div style="background:#80b3ff;height:16px;width:${barWidth}px;max-width:60px;margin-right:4px;"></div>
                             <span title="£${amt.toLocaleString()} (${pct ? pct.toFixed(2) : '0.00'}%)">
-                                £${amtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
+                                £${formattedAmtInMillions}m<br><span style='font-size:11px;color:#555;'>${pct ? pct.toFixed(2) : '0.00'}%</span>
                             </span>
                         </div>`;
                     },
