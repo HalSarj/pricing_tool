@@ -1,6 +1,44 @@
 # Mortgage Market Analysis Tool
 
-A browser-based tool for analyzing mortgage pricing trends by visualizing loan amounts categorized by premium bands and time periods.
+A web-based tool for analyzing mortgage pricing trends and market share across different premium bands.
+
+## Features
+
+- **Data Import**: Upload ESIS data and swap rates files in CSV or Excel format
+- **Premium Band Analysis**: View mortgage data aggregated by premium bands
+- **Filtering Options**: Filter by date range, lender, product type, purchase type, and LTV
+- **Product Term Filtering**: Filter for 2-year or 5-year fixed rate products
+- **Market Share Analysis**: Analyze lender market share across selected premium bands
+- **Data Export**: Export analysis results to CSV
+
+## Usage
+
+1. Upload your ESIS data and swap rates files
+2. Click "Analyze Data" to process the files
+3. Use the filters to refine your analysis
+4. View the Premium Band Analysis table
+5. Select premium bands for the Lender Market Share Analysis
+6. Export data as needed
+
+## Technologies Used
+
+- HTML/CSS/JavaScript
+- [Tabulator](https://tabulator.info/) for interactive tables
+- [Papa Parse](https://www.papaparse.com/) for CSV parsing
+- [SheetJS](https://sheetjs.com/) for Excel file parsing
+- [Moment.js](https://momentjs.com/) for date handling
+
+## Local Development
+
+To run this project locally:
+
+1. Clone the repository
+2. Open `index.html` in your browser
+3. No build steps or server setup required
+
+## License
+
+MIT License
 
 ## Overview
 
