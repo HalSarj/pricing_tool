@@ -48,44 +48,45 @@ const elements = {
 
 // Initialize elements object with DOM references
 function initElementReferences() {
-    elements.esisFileInput = getElement('esis-file');
-    elements.swapFileInput = getElement('swap-file');
-    elements.esisFileInfo = getElement('esis-file-info');
-    elements.swapFileInfo = getElement('swap-file-info');
-    elements.analyzeBtn = getElement('analyze-btn');
-    elements.loadingIndicator = getElement('loading-indicator');
-    elements.filtersSection = getElement('filters-section');
-    elements.resultsSection = getElement('results-section');
-    elements.resultsTable = getElement('results-table');
-    elements.exportBtn = getElement('export-btn');
-    elements.dateStart = getElement('date-start');
-    elements.dateEnd = getElement('date-end');
-    elements.productType = getElement('product-type');
-    elements.purchaseType = getElement('purchase-type');
-    elements.lenderFilter = getElement('lender-filter');
-    elements.ltvFilter = getElement('ltv-filter');
-    elements.productTermFilter = getElement('product-term-filter');
-    elements.applyFiltersBtn = getElement('apply-filters');
-    elements.resetFiltersBtn = getElement('reset-filters');
-    elements.errorContainer = getElement('error-container');
-    elements.errorText = getElement('error-text');
-    elements.dismissError = getElement('dismiss-error');
-    elements.marketShareSection = getElement('market-share-section');
-    elements.marketShareTable = getElement('market-share-table');
-    elements.premiumBandsContainer = getElement('premium-bands-container');
-    elements.premiumBandsCounter = getElement('premium-bands-counter');
-    elements.applyMarketShareBtn = getElement('apply-market-share');
-    elements.exportMarketShareBtn = getElement('export-market-share-btn');
-    elements.heatmapSection = getElement('heatmap-section');
-    elements.heatmapVisualization = getElement('heatmap-visualization');
-    elements.lenderModeRadio = getElement('lender-mode');
-    elements.premiumModeRadio = getElement('premium-mode');
-    elements.marketShareTrendsSection = getElement('market-share-trends-section');
-    elements.trendsPremiumBandsContainer = getElement('trends-premium-bands-container');
-    elements.trendsPremiumBandsCounter = getElement('trends-premium-bands-counter');
-    elements.trendsApplyBtn = getElement('trends-apply-btn');
-    elements.trendsExportBtn = getElement('trends-export-btn');
-    elements.marketShareTrendsChart = getElement('market-share-trends-chart');
+    elements.esisFileInput = elements.getElement('esis-file');
+    elements.swapFileInput = elements.getElement('swap-file');
+    elements.esisFileInfo = elements.getElement('esis-file-info');
+    elements.swapFileInfo = elements.getElement('swap-file-info');
+    elements.analyzeBtn = elements.getElement('analyze-btn');
+    elements.loadingIndicator = elements.getElement('loading-indicator');
+    elements.filtersSection = elements.getElement('filters-section');
+    elements.resultsSection = elements.getElement('results-section');
+    elements.resultsTable = elements.getElement('results-table');
+    elements.exportBtn = elements.getElement('export-btn');
+    elements.dateStart = elements.getElement('date-start');
+    elements.dateEnd = elements.getElement('date-end');
+    elements.productType = elements.getElement('product-type');
+    elements.purchaseType = elements.getElement('purchase-type');
+    elements.lenderFilter = elements.getElement('lender-filter');
+    elements.ltvFilter = elements.getElement('ltv-filter');
+    elements.productTermFilter = elements.getElement('product-term-filter');
+    elements.applyFiltersBtn = elements.getElement('apply-filters');
+    elements.resetFiltersBtn = elements.getElement('reset-filters');
+    elements.errorContainer = elements.getElement('error-container');
+    elements.errorText = elements.getElement('error-text');
+    elements.dismissError = elements.getElement('dismiss-error');
+    elements.marketShareSection = elements.getElement('market-share-section');
+    elements.marketShareTable = elements.getElement('market-share-table');
+    elements.premiumBandsContainer = elements.getElement('premium-bands-container');
+    elements.premiumBandsCounter = elements.getElement('premium-bands-counter');
+    elements.applyMarketShareBtn = elements.getElement('apply-market-share');
+    elements.exportMarketShareBtn = elements.getElement('export-market-share-btn');
+    elements.heatmapSection = elements.getElement('heatmap-section');
+    elements.heatmapVisualization = elements.getElement('heatmap-visualization');
+    elements.lenderModeRadio = elements.getElement('lender-mode');
+    elements.premiumModeRadio = elements.getElement('premium-mode');
+    elements.marketShareTrendsSection = elements.getElement('market-share-trends-section');
+    elements.trendsPremiumBandsContainer = elements.getElement('trends-premium-bands-container');
+    elements.trendsPremiumBandsCounter = elements.getElement('trends-premium-bands-counter');
+    elements.trendsApplyBtn = elements.getElement('trends-apply-btn');
+    elements.trendsExportBtn = elements.getElement('trends-export-btn');
+    elements.marketShareTrendsChart = elements.getElement('market-share-trends-chart');
+    
     console.log('Element references initialized');
 }
 
@@ -3621,6 +3622,8 @@ function getRandomColor() {
 
 // Initialize the premium band selector for market share trends
 function initializePremiumBandSelector() {
+    console.log('Initializing premium band selector...');
+    
     // Re-get the element references to ensure they're up to date
     elements.trendsPremiumBandsContainer = document.getElementById('trends-premium-bands-container');
     elements.trendsPremiumBandsCounter = document.getElementById('trends-premium-bands-counter');
@@ -3628,6 +3631,13 @@ function initializePremiumBandSelector() {
     elements.trendsExportBtn = document.getElementById('trends-export-btn');
     elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
     elements.marketShareTrendsSection = document.getElementById('market-share-trends-section');
+    
+    console.log('Premium bands container found:', !!elements.trendsPremiumBandsContainer);
+    console.log('Premium bands counter found:', !!elements.trendsPremiumBandsCounter);
+    console.log('Trends apply button found:', !!elements.trendsApplyBtn);
+    console.log('Trends export button found:', !!elements.trendsExportBtn);
+    console.log('Market share trends chart found:', !!elements.marketShareTrendsChart);
+    console.log('Market share trends section found:', !!elements.marketShareTrendsSection);
     
     // If the trends premium bands container doesn't exist yet, exit
     if (!elements.trendsPremiumBandsContainer) {
@@ -3638,10 +3648,12 @@ function initializePremiumBandSelector() {
     // Add event listeners for the Apply and Export buttons
     if (elements.trendsApplyBtn) {
         elements.trendsApplyBtn.addEventListener('click', updateMarketShareTrendsChart);
+        console.log('Added click event listener to trends apply button');
     }
     
     if (elements.trendsExportBtn) {
         elements.trendsExportBtn.addEventListener('click', exportTrendsData);
+        console.log('Added click event listener to trends export button');
     }
     
     // If we don't have data yet, we'll populate the bands when data is processed
@@ -3650,6 +3662,7 @@ function initializePremiumBandSelector() {
         return;
     }
     
+    console.log('Calling populatePremiumBands() with', state.esisData.length, 'records');
     populatePremiumBands();
 }
 
