@@ -2710,14 +2710,77 @@ function applyMarketShareAnalysis() {
 function updateMarketShareTable() {
     console.log('DIAGNOSTIC - updateMarketShareTable called');
     
-    // Make sure we have filtered data to work with
-    if (!state.filteredData || !Array.isArray(state.filteredData)) {
-        console.error('Cannot update market share table: filtered data is not available');
+    // Make sure we have ESIS data to work with
+    if (!state.esisData || !Array.isArray(state.esisData)) {
+        console.error('Cannot update market share table: ESIS data is not available');
         return;
     }
     
-    // Use the currently filtered data (which respects the top filters)
-    const data = state.filteredData;
+    // Create a custom filtered dataset that respects all filters EXCEPT lender filter
+    const data = state.esisData.filter(record => {
+        try {
+            // Skip invalid records
+            if (!record || typeof record !== 'object') {
+                return false;
+            }
+            
+            // Filter by date range
+            if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
+                if (!record.DocumentDate || !record.Month) { 
+                    return false;
+                }
+                const recordMonth = record.Month; 
+                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
+                    return false;
+                }
+            }
+            
+            // Filter by product type
+            if (state.filters.productTypes.length > 0) {
+                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
+                    return false;
+                }
+            }
+            
+            // Filter by purchase type
+            if (state.filters.purchaseTypes.length > 0) {
+                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
+                    return false;
+                }
+            }
+            
+            // Filter by LTV range
+            if (state.filters.ltvRange !== 'all') {
+                // Use our standardized LTV field from mapping
+                let ltv = record.StandardizedLTV;
+                
+                // If LTV is available, filter by it
+                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
+                        return false;
+                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                        return false;
+                    }
+                }
+            }
+            
+            // Apply product term filter
+            if (document.getElementById('product-term-filter').value !== 'all') {
+                const termFilterResult = getDataByProductTerm([record], document.getElementById('product-term-filter').value);
+                if (termFilterResult.length === 0) {
+                    return false;
+                }
+            }
+            
+            // Ignore lender filter - include all lenders
+            return true;
+        } catch (error) {
+            console.error('Error in market share filtering:', error, record);
+            return false;
+        }
+    });
+    
+    console.log(`Market Share Analysis: Using ${data.length} records (respecting all filters except lender)`);
     
     // Make sure we have lender market share state initialized
     if (!state.lenderMarketShare) {
@@ -2777,7 +2840,163 @@ function updateMarketShareTable() {
     
     // Aggregate and render
     console.log('DIAGNOSTIC - About to call aggregateLenderMarketShare with bands:', selectedBands);
-    const dataForRender = aggregateLenderMarketShare(selectedBands);
+    
+    // We'll directly calculate the market share data from our filtered dataset
+    // that ignores the lender filter
+    
+    // Temporarily adjust premium range to include 500-520 band if it's selected
+    const originalPremiumRange = [...state.filters.premiumRange];
+    
+    // If 500-520 band is selected, ensure the premium range includes it
+    if (selectedBands.includes('500-520') && state.filters.premiumRange[1] < 520) {
+        console.log(`DIAGNOSTIC - Adjusting premium range from [${state.filters.premiumRange[0]}-${state.filters.premiumRange[1]}] to [${state.filters.premiumRange[0]}-520] to include 500-520 band`);
+        state.filters.premiumRange[1] = 520;
+    }
+    
+    // Get unique lenders from our filtered data
+    const lenders = [...new Set(data.map(r => r.BaseLender || r.Provider).filter(Boolean))].sort();
+    
+    // Build structure for band totals
+    const bandTotals = {};
+    selectedBands.forEach(band => {
+        bandTotals[band] = 0;
+        bandTotals[band + '_below80'] = 0;
+        bandTotals[band + '_above80'] = 0;
+    });
+    
+    // Initialize lender data structure
+    const lenderData = {};
+    lenders.forEach(lender => {
+        lenderData[lender] = {};
+        selectedBands.forEach(band => {
+            lenderData[lender][band] = 0;
+            lenderData[lender][band + '_pct'] = 0;
+            lenderData[lender][band + '_below80'] = 0;
+            lenderData[lender][band + '_below80_pct'] = 0;
+            lenderData[lender][band + '_above80'] = 0;
+            lenderData[lender][band + '_above80_pct'] = 0;
+        });
+        lenderData[lender].Total = 0;
+        lenderData[lender].Total_pct = 0;
+        lenderData[lender].Total_below80 = 0;
+        lenderData[lender].Total_above80 = 0;
+    });
+    
+    // Aggregate data
+    data.forEach(r => {
+        const lender = r.BaseLender || r.Provider;
+        const band = r.PremiumBand;
+        
+        // Make sure we're processing records for all the selected bands
+        if (lender && selectedBands.includes(band)) {
+            const loanAmount = r.Loan || 0;
+            lenderData[lender][band] += loanAmount;
+            bandTotals[band] += loanAmount;
+            
+            // Split by LTV
+            const ltv = r.StandardizedLTV;
+            if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+                if (ltv < 80) {
+                    lenderData[lender][band + '_below80'] += loanAmount;
+                    bandTotals[band + '_below80'] += loanAmount;
+                } else {
+                    lenderData[lender][band + '_above80'] += loanAmount;
+                    bandTotals[band + '_above80'] += loanAmount;
+                }
+            }
+        }
+    });
+    
+    // Calculate totals and percentages
+    let overallTotal = 0;
+    let overallTotal_below80 = 0;
+    let overallTotal_above80 = 0;
+    
+    selectedBands.forEach(band => {
+        overallTotal += bandTotals[band];
+        overallTotal_below80 += bandTotals[band + '_below80'];
+        overallTotal_above80 += bandTotals[band + '_above80'];
+    });
+    
+    // Calculate percentages for each lender and band
+    lenders.forEach(lender => {
+        let lenderTotal = 0;
+        let lenderTotal_below80 = 0;
+        let lenderTotal_above80 = 0;
+        
+        selectedBands.forEach(band => {
+            // Total for this band
+            lenderTotal += lenderData[lender][band];
+            lenderTotal_below80 += lenderData[lender][band + '_below80'];
+            lenderTotal_above80 += lenderData[lender][band + '_above80'];
+            
+            // Calculate percentage of this band's total
+            if (bandTotals[band] > 0) {
+                lenderData[lender][band + '_pct'] = (lenderData[lender][band] / bandTotals[band]) * 100;
+            }
+            
+            // Calculate percentage of this band's below 80% LTV total
+            if (bandTotals[band + '_below80'] > 0) {
+                lenderData[lender][band + '_below80_pct'] = (lenderData[lender][band + '_below80'] / bandTotals[band + '_below80']) * 100;
+            }
+            
+            // Calculate percentage of this band's above 80% LTV total
+            if (bandTotals[band + '_above80'] > 0) {
+                lenderData[lender][band + '_above80_pct'] = (lenderData[lender][band + '_above80'] / bandTotals[band + '_above80']) * 100;
+            }
+        });
+        
+        lenderData[lender].Total = lenderTotal;
+        lenderData[lender].Total_below80 = lenderTotal_below80;
+        lenderData[lender].Total_above80 = lenderTotal_above80;
+        
+        // Calculate percentage of overall total
+        if (overallTotal > 0) {
+            lenderData[lender].Total_pct = (lenderTotal / overallTotal) * 100;
+        }
+        
+        // Calculate percentage of overall below 80% LTV total
+        if (overallTotal_below80 > 0) {
+            lenderData[lender].Total_below80_pct = (lenderTotal_below80 / overallTotal_below80) * 100;
+        }
+        
+        // Calculate percentage of overall above 80% LTV total
+        if (overallTotal_above80 > 0) {
+            lenderData[lender].Total_above80_pct = (lenderTotal_above80 / overallTotal_above80) * 100;
+        }
+    });
+    
+    // Create summary row for total market
+    const summary = { Lender: 'Total Market' };
+    selectedBands.forEach(band => {
+        summary[band] = bandTotals[band];
+        summary[band + '_pct'] = 100; // Always 100% of itself
+        summary[band + '_below80'] = bandTotals[band + '_below80'];
+        summary[band + '_below80_pct'] = 100;
+        summary[band + '_above80'] = bandTotals[band + '_above80'];
+        summary[band + '_above80_pct'] = 100;
+    });
+    summary.Total = overallTotal;
+    summary.Total_pct = 100; // Always 100% of itself
+    summary.Total_below80 = overallTotal_below80;
+    summary.Total_below80_pct = 100;
+    summary.Total_above80 = overallTotal_above80;
+    summary.Total_above80_pct = 100;
+    
+    // Restore original premium range
+    state.filters.premiumRange = originalPremiumRange;
+    
+    // Create the final data object for rendering
+    const dataForRender = {
+        lenders,
+        lenderData,
+        bandTotals,
+        overallTotal,
+        overallTotal_below80,
+        overallTotal_above80,
+        summary
+    };
+    
     state.lenderMarketShareData = dataForRender;
     
     // DIAGNOSTIC: Check if 500-520 band data is in the aggregated data
@@ -4001,7 +4220,7 @@ function updateMarketShareTrendsChart() {
             
             console.log('Using date range filter:', state.filters.dateRange);
             
-            // Get data filtered by the main date range filter (but NOT by lender filter)
+            // Get data filtered by the main date range filter, LTV filter, and premium bands (but NOT by lender filter)
             const filteredByDate = state.esisData.filter(record => {
                 // Skip records with invalid dates
                 if (!record.Month) return false;
@@ -4014,7 +4233,20 @@ function updateMarketShareTrendsChart() {
                 // Apply premium band filter
                 const inSelectedBands = selectedBands.length === 0 || selectedBands.includes(record.PremiumBand);
                 
-                return inDateRange && inSelectedBands;
+                // Apply LTV filter
+                let ltvFilterPassed = true;
+                if (state.filters.ltvRange && state.filters.ltvRange !== 'all') {
+                    const ltv = parseFloat(record.LTV);
+                    if (!isNaN(ltv)) {
+                        if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
+                            ltvFilterPassed = false;
+                        } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                            ltvFilterPassed = false;
+                        }
+                    }
+                }
+                
+                return inDateRange && inSelectedBands && ltvFilterPassed;
             });
             
             if (filteredByDate.length === 0) {
