@@ -371,8 +371,13 @@ async function processData() {
         // Enrich state.esisData with PremiumBand and Month
         state.esisData = enrichEsisData(state.esisData);
         
-        // Update premium band selector for market share trends
-        updatePremiumBandSelector();
+        // Initialize the premium band selector for market share trends
+        initializePremiumBandSelector();
+        
+        // Make sure the market share trends section is visible
+        if (elements.marketShareTrendsSection) {
+            elements.marketShareTrendsSection.classList.remove('hidden');
+        }
         
         // Log product type counts to verify both 2-year and 5-year products are present
         const twoYearCount = state.esisData.filter(r => r.NormalizedTerm === 24).length;
@@ -445,7 +450,6 @@ async function processData() {
         }
         
         // Initialize Market Share Trends section
-        updatePremiumBandSelector();
         resetMarketShareTrends();
         
         // Log the state of filters for debugging
@@ -2290,26 +2294,27 @@ function resetMarketShareTable() {
     }
 }
 
-// Reset market share trends chart and selection
+// Reset the market share trends section when filters change
 function resetMarketShareTrends() {
-    // Reset premium band buttons selection
-    const premiumBandButtons = document.querySelectorAll('.premium-band-btn');
-    premiumBandButtons.forEach(button => {
-        button.classList.remove('selected');
+    // Clear any selected premium bands
+    const premiumBandChips = document.querySelectorAll('#trends-premium-bands-container .premium-band-chip');
+    premiumBandChips.forEach(chip => {
+        chip.classList.remove('selected');
     });
     
-    // Reset selection count
-    if (elements.bandsSelectedCount) {
-        elements.bandsSelectedCount.textContent = '0';
+    // Reset the selected count
+    if (elements.trendsPremiumBandsCounter) {
+        elements.trendsPremiumBandsCounter.textContent = '0 selected';
     }
     
-    // Reset chart to empty state
+    // Clear the chart
     if (elements.marketShareTrendsChart) {
         elements.marketShareTrendsChart.innerHTML = 
             '<div class="no-data-message">Please select premium bands and click Apply to view trends.</div>';
     }
     
-    console.log('Market share trends reset due to filter changes');
+    // Update the premium band selector
+    updatePremiumBandSelector();
 }
 
 // --- MARKET SHARE: Aggregate data by lender and premium band ---
@@ -3762,21 +3767,7 @@ function updateSelectedBandsCount() {
     elements.trendsPremiumBandsCounter.textContent = `${selectedCount} selected`;
 }
 
-// Reset the market share trends section when filters change
-function resetMarketShareTrends() {
-    // Make sure we have the element references
-    if (!elements.marketShareTrendsChart) {
-        elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
-    }
-    
-    if (elements.marketShareTrendsChart) {
-        elements.marketShareTrendsChart.innerHTML = 
-            '<div class="no-data-message">Please select premium bands and click Apply to view trends.</div>';
-    }
-    
-    // Re-initialize the premium band selector
-    updatePremiumBandSelector();
-}
+// This is a duplicate function that has been removed. The actual resetMarketShareTrends function is defined earlier in the code.
 
 // Update the market share trends chart based on selected premium bands
 function updateMarketShareTrendsChart() {
