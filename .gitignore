@@ -19,6 +19,13 @@ node_modules/
 *.ntvs*
 *.njsproj
 *.sln
+
+# Large data files
+data/FULL ESIS.csv
+*.csv
+*.xlsx
+!mortgage-analysis-tool/*.csv
+!mortgage-analysis-tool/*.xlsx
 *.sw?
 
 # OS specific
