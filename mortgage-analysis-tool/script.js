@@ -48,61 +48,46 @@ const elements = {
 
 // Initialize elements object with DOM references
 function initElementReferences() {
-    // File input elements
-    elements.esisFileInput = elements.getElement('esis-file');
-    elements.swapFileInput = elements.getElement('swap-file');
-    elements.esisFileInfo = elements.getElement('esis-file-info');
-    elements.swapFileInfo = elements.getElement('swap-file-info');
-    
-    // Button elements
-    elements.analyzeBtn = elements.getElement('analyze-btn');
-    elements.exportBtn = elements.getElement('export-btn');
-    elements.applyFiltersBtn = elements.getElement('apply-filters');
-    elements.resetFiltersBtn = elements.getElement('reset-filters');
-    
-    // Section elements
-    elements.loadingIndicator = elements.getElement('loading-indicator');
-    elements.filtersSection = elements.getElement('filters-section');
-    elements.resultsSection = elements.getElement('results-section');
-    elements.resultsTable = elements.getElement('results-table');
-    
-    // Filter elements
-    elements.dateStart = elements.getElement('date-start');
-    elements.dateEnd = elements.getElement('date-end');
-    elements.lenderFilter = elements.getElement('lender-filter');
-    elements.productType = elements.getElement('product-type');
-    elements.purchaseType = elements.getElement('purchase-type');
-    elements.ltvFilter = elements.getElement('ltv-filter');
-    elements.productTermFilter = elements.getElement('product-term-filter');
-    
-    // Market share analysis elements
-    elements.marketShareSection = elements.getElement('market-share-section');
-    elements.premiumBandsContainer = elements.getElement('premium-bands-container');
-    elements.premiumBandsCounter = elements.getElement('premium-bands-counter');
-    elements.applyMarketShareBtn = elements.getElement('apply-market-share');
-    elements.marketShareTable = elements.getElement('market-share-table');
-    elements.exportMarketShareBtn = elements.getElement('export-market-share-btn');
-    
-    // Market share trends elements
-    elements.marketShareTrendsSection = elements.getElement('market-share-trends-section');
-    elements.trendsPremiumBandsGrid = elements.getElement('trends-premium-bands-grid');
-    elements.bandsSelectedCount = elements.getElement('bands-selected-count');
-    elements.trendsApplyBtn = elements.getElement('trends-apply-btn');
-    elements.trendsExportBtn = elements.getElement('trends-export-btn');
-    elements.marketShareTrendsChart = elements.getElement('market-share-trends-chart');
-    
-    // Heatmap elements
-    elements.heatmapSection = elements.getElement('heatmap-section');
-    elements.heatmapVisualization = elements.getElement('heatmap-visualization');
-    elements.heatmapModeRadios = document.querySelectorAll('input[name="heatmap-mode"]');
-    
-    // Error elements
-    elements.errorContainer = elements.getElement('error-container');
-    elements.errorText = elements.getElement('error-text');
-    elements.dismissError = elements.getElement('dismiss-error');
-    
+    elements.esisFileInput = getElement('esis-file');
+    elements.swapFileInput = getElement('swap-file');
+    elements.esisFileInfo = getElement('esis-file-info');
+    elements.swapFileInfo = getElement('swap-file-info');
+    elements.analyzeBtn = getElement('analyze-btn');
+    elements.loadingIndicator = getElement('loading-indicator');
+    elements.filtersSection = getElement('filters-section');
+    elements.resultsSection = getElement('results-section');
+    elements.resultsTable = getElement('results-table');
+    elements.exportBtn = getElement('export-btn');
+    elements.dateStart = getElement('date-start');
+    elements.dateEnd = getElement('date-end');
+    elements.productType = getElement('product-type');
+    elements.purchaseType = getElement('purchase-type');
+    elements.lenderFilter = getElement('lender-filter');
+    elements.ltvFilter = getElement('ltv-filter');
+    elements.productTermFilter = getElement('product-term-filter');
+    elements.applyFiltersBtn = getElement('apply-filters');
+    elements.resetFiltersBtn = getElement('reset-filters');
+    elements.errorContainer = getElement('error-container');
+    elements.errorText = getElement('error-text');
+    elements.dismissError = getElement('dismiss-error');
+    elements.marketShareSection = getElement('market-share-section');
+    elements.marketShareTable = getElement('market-share-table');
+    elements.premiumBandsContainer = getElement('premium-bands-container');
+    elements.premiumBandsCounter = getElement('premium-bands-counter');
+    elements.applyMarketShareBtn = getElement('apply-market-share');
+    elements.exportMarketShareBtn = getElement('export-market-share-btn');
+    elements.heatmapSection = getElement('heatmap-section');
+    elements.heatmapVisualization = getElement('heatmap-visualization');
+    elements.lenderModeRadio = getElement('lender-mode');
+    elements.premiumModeRadio = getElement('premium-mode');
+    elements.marketShareTrendsSection = getElement('market-share-trends-section');
+    elements.trendsPremiumBandsContainer = getElement('trends-premium-bands-container');
+    elements.trendsPremiumBandsCounter = getElement('trends-premium-bands-counter');
+    elements.trendsApplyBtn = getElement('trends-apply-btn');
+    elements.trendsExportBtn = getElement('trends-export-btn');
+    elements.marketShareTrendsChart = getElement('market-share-trends-chart');
     console.log('Element references initialized');
-};
+}
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', initializeApp);
@@ -2005,11 +1990,10 @@ function applyFilters() {
                 // Auto-select the first premium band if none are selected
                 // This ensures the market share table is displayed without requiring user interaction
                 if (state.processedData.premiumBands && state.processedData.premiumBands.length > 0) {
-                    // Select the first option in the dropdown
-                    if (elements.premiumBandSelect.options.length > 0) {
-                        elements.premiumBandSelect.options[0].selected = true;
-                        // Update the selected bands in state
-                        state.marketShareFilters.selectedPremiumBands = [elements.premiumBandSelect.options[0].value];
+                    // Update the market share table with default selection
+                    if (state.processedData.premiumBands.length > 0) {
+                        // Select the first premium band by default
+                        state.marketShareFilters.selectedPremiumBands = [state.processedData.premiumBands[0]];
                         // Update the market share table
                         updateMarketShareTable();
                     }
@@ -3633,16 +3617,16 @@ function getRandomColor() {
 // Initialize the premium band selector for market share trends
 function initializePremiumBandSelector() {
     // Re-get the element references to ensure they're up to date
-    elements.trendsPremiumBandsGrid = document.getElementById('trends-premium-bands-grid');
-    elements.bandsSelectedCount = document.getElementById('bands-selected-count');
+    elements.trendsPremiumBandsContainer = document.getElementById('trends-premium-bands-container');
+    elements.trendsPremiumBandsCounter = document.getElementById('trends-premium-bands-counter');
     elements.trendsApplyBtn = document.getElementById('trends-apply-btn');
     elements.trendsExportBtn = document.getElementById('trends-export-btn');
     elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
     elements.marketShareTrendsSection = document.getElementById('market-share-trends-section');
     
-    // If the trends premium bands grid doesn't exist yet, exit
-    if (!elements.trendsPremiumBandsGrid) {
-        console.warn('Premium bands grid element not found');
+    // If the trends premium bands container doesn't exist yet, exit
+    if (!elements.trendsPremiumBandsContainer) {
+        console.warn('Premium bands container element not found');
         return;
     }
     
@@ -3667,12 +3651,12 @@ function initializePremiumBandSelector() {
 // Update the premium band selector when data changes
 function updatePremiumBandSelector() {
     // Make sure we have the element references
-    if (!elements.trendsPremiumBandsGrid) {
-        elements.trendsPremiumBandsGrid = document.getElementById('trends-premium-bands-grid');
+    if (!elements.trendsPremiumBandsContainer) {
+        elements.trendsPremiumBandsContainer = document.getElementById('trends-premium-bands-container');
     }
     
-    if (!elements.bandsSelectedCount) {
-        elements.bandsSelectedCount = document.getElementById('bands-selected-count');
+    if (!elements.trendsPremiumBandsCounter) {
+        elements.trendsPremiumBandsCounter = document.getElementById('trends-premium-bands-counter');
     }
     
     if (!elements.marketShareTrendsSection) {
@@ -3684,8 +3668,8 @@ function updatePremiumBandSelector() {
     }
     
     // If we still don't have the elements, exit
-    if (!elements.trendsPremiumBandsGrid) {
-        console.warn('Premium bands grid element not found during update');
+    if (!elements.trendsPremiumBandsContainer) {
+        console.warn('Premium bands container element not found during update');
         return;
     }
     
@@ -3705,18 +3689,19 @@ function populatePremiumBands() {
     console.log('Populating premium bands...');
     
     // Double-check that we have the element references
-    if (!elements.trendsPremiumBandsGrid) {
-        elements.trendsPremiumBandsGrid = document.getElementById('trends-premium-bands-grid');
-        console.log('Re-fetched trends premium bands grid element:', elements.trendsPremiumBandsGrid ? 'found' : 'not found');
+    if (!elements.trendsPremiumBandsContainer) {
+        elements.trendsPremiumBandsContainer = document.getElementById('trends-premium-bands-container');
+        console.log('Re-fetched trends premium bands container:', elements.trendsPremiumBandsContainer ? 'found' : 'not found');
     }
     
-    if (!elements.bandsSelectedCount) {
-        elements.bandsSelectedCount = document.getElementById('bands-selected-count');
+    if (!elements.trendsPremiumBandsCounter) {
+        elements.trendsPremiumBandsCounter = document.getElementById('trends-premium-bands-counter');
+        console.log('Re-fetched trends premium bands counter:', elements.trendsPremiumBandsCounter ? 'found' : 'not found');
     }
     
     // Exit if we still don't have the elements or data
-    if (!elements.trendsPremiumBandsGrid || !state.esisData) {
-        console.warn('Cannot populate premium bands: missing grid element or data');
+    if (!elements.trendsPremiumBandsContainer || !state.esisData) {
+        console.warn('Cannot populate premium bands: missing container element or data');
         return;
     }
     
@@ -3731,22 +3716,31 @@ function populatePremiumBands() {
     console.log(`Found ${premiumBands.length} unique premium bands`);
     
     // Clear the container
-    elements.trendsPremiumBandsGrid.innerHTML = '';
+    elements.trendsPremiumBandsContainer.innerHTML = '';
     
-    // Create buttons for each premium band
+    // Create chips for each premium band
     premiumBands.forEach(band => {
-        const button = document.createElement('button');
-        button.className = 'premium-band-btn';
-        button.setAttribute('data-band', band);
-        button.textContent = band;
+        const chip = document.createElement('div');
+        chip.className = 'premium-band-chip';
+        chip.setAttribute('data-band', band);
+        
+        // Add checkmark span
+        const checkmark = document.createElement('span');
+        checkmark.className = 'checkmark';
+        checkmark.textContent = '✓';
+        chip.appendChild(checkmark);
+        
+        // Add band text
+        const text = document.createTextNode(band);
+        chip.appendChild(text);
         
         // Add click event listener to toggle selection
-        button.addEventListener('click', function() {
+        chip.addEventListener('click', function() {
             this.classList.toggle('selected');
             updateSelectedBandsCount();
         });
         
-        elements.trendsPremiumBandsGrid.appendChild(button);
+        elements.trendsPremiumBandsContainer.appendChild(chip);
     });
     
     // Initialize the selected count
@@ -3762,10 +3756,10 @@ function populatePremiumBands() {
 
 // Update the count of selected premium bands
 function updateSelectedBandsCount() {
-    if (!elements.bandsSelectedCount) return;
+    if (!elements.trendsPremiumBandsCounter) return;
     
-    const selectedCount = document.querySelectorAll('.premium-band-btn.selected').length;
-    elements.bandsSelectedCount.textContent = selectedCount;
+    const selectedCount = document.querySelectorAll('#trends-premium-bands-container .premium-band-chip.selected').length;
+    elements.trendsPremiumBandsCounter.textContent = `${selectedCount} selected`;
 }
 
 // Reset the market share trends section when filters change
@@ -3806,10 +3800,10 @@ function updateMarketShareTrendsChart() {
         }
         
         // Get selected premium bands
-        const premiumBandButtons = document.querySelectorAll('.premium-band-btn.selected');
-        console.log(`Found ${premiumBandButtons.length} selected premium band buttons`);
+        const selectedPremiumBandChips = document.querySelectorAll('#trends-premium-bands-container .premium-band-chip.selected');
+        console.log(`Found ${selectedPremiumBandChips.length} selected premium band chips`);
         
-        const selectedBands = Array.from(premiumBandButtons).map(btn => btn.getAttribute('data-band'));
+        const selectedBands = Array.from(selectedPremiumBandChips).map(chip => chip.getAttribute('data-band'));
         console.log('Selected premium bands:', selectedBands);
         
         // If no bands are selected, show a message and return

@@ -128,21 +128,19 @@
         
         <section class="market-share-trends hidden" id="market-share-trends-section">
             <h2>Market Share Trends</h2>
-            <div class="premium-band-selector">
-                <h3>Price premium over swaps</h3>
-                <div class="premium-bands-container">
-                    <div class="premium-bands-grid" id="trends-premium-bands-grid">
-                        <!-- Premium band buttons will be generated dynamically -->
+            <div class="market-share-controls">
+                <div class="filter-group">
+                    <label class="premium-bands-label">Select Premium Bands:</label>
+                    <div id="trends-premium-bands-container" class="premium-bands-container">
+                        <!-- Premium band chips will be dynamically added here -->
                     </div>
+                    <div class="premium-bands-counter" id="trends-premium-bands-counter">0 selected</div>
                 </div>
-                
-                <div class="selection-controls">
-                    <div class="selection-count"><span id="bands-selected-count">0</span> selected</div>
-                    <button id="trends-apply-btn" class="apply-btn">Apply</button>
-                    <button id="trends-export-btn" class="export-btn">Export Data</button>
-                </div>
+                <button id="trends-apply-btn">Apply</button>
             </div>
-
+            <div class="results-actions">
+                <button id="trends-export-btn">Export Data</button>
+            </div>
             <div id="market-share-trends-chart" class="trends-chart-container">
                 <!-- Chart will be rendered here -->
             </div>
