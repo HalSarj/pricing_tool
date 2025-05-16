@@ -19,18 +19,18 @@ node_modules/
 *.ntvs*
 *.njsproj
 *.sln
-
-# Large data files
-data/FULL ESIS.csv
-*.csv
-*.xlsx
-!mortgage-analysis-tool/*.csv
-!mortgage-analysis-tool/*.xlsx
 *.sw?
 
 # OS specific
 .DS_Store
 
-# Task files
-tasks.json
-tasks/ 
+# Exclude all subdirectories
+*/
+
+# Include only root files needed for the website
+!index.html
+!script.js
+!style.css
+!Favicon.png
+!README.md
+!.nojekyll
