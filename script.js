@@ -18,6 +18,12 @@ const state = {
     marketShareFilters: {
         selectedPremiumBands: []
     },
+    lenderMarketShare: {
+        selectedPremiumBands: []
+    },
+    marketShareTrends: {
+        selectedPremiumBands: []
+    },
     totalMarketByPremiumBand: {}, // For % of market calculation
     overallTotalMarket: 0,      // For overall % of market calculation
     lenderMarketShareData: null  // For lender market share analysis
@@ -2058,28 +2064,31 @@ function filterData(data) {
             // Filter by premium range
             if (record.PremiumBand === 'N/A') {
                 if (state.filters.premiumRange[0] > -50 || state.filters.premiumRange[1] < 250) { 
-                     return false;
+                    return false;
                 }
             } else if (record.PremiumOverSwap === null || record.PremiumOverSwap === undefined) {
-                // Potentially skip or handle records where PremiumOverSwap is not defined but PremiumBand might be if derived differently
-                // If we have a valid PremiumBand, let's keep the record
+                // Handle records where PremiumOverSwap is not defined but we have a PremiumBand
                 if (record.PremiumBand) {
-                    // Extract the lower bound of the premium band
-                    const bandLowerBound = parseInt(record.PremiumBand.split('-')[0]);
-                    if (!isNaN(bandLowerBound)) {
-                        // Check if it falls within the filter range
-                        if (bandLowerBound < state.filters.premiumRange[0] || bandLowerBound > state.filters.premiumRange[1]) {
-                            return false;
-                        }
-                        // Otherwise keep it
-                        return true;
+                    // Extract the bounds of the premium band (e.g., '60-80' -> [60, 80])
+                    const bandBounds = record.PremiumBand.split('-').map(Number);
+                    const bandMin = bandBounds[0];
+                    const bandMax = bandBounds[1] || bandBounds[0]; // Handle single value bands
+                    
+                    // Check if the band overlaps with the filter range
+                    const filterMin = state.filters.premiumRange[0];
+                    const filterMax = state.filters.premiumRange[1];
+                    
+                    // Check if the band is completely outside the filter range
+                    if (bandMin > filterMax || bandMax < filterMin) {
+                        return false;
                     }
+                    // Otherwise keep it (there's some overlap)
+                    return true;
                 }
+                // If no PremiumBand, we can't determine if it should be filtered
+                return false;
             } else if (record.PremiumOverSwap < state.filters.premiumRange[0] || record.PremiumOverSwap > state.filters.premiumRange[1]) {
-                // DIAGNOSTIC: Check if we're filtering out 500-520 band records
-                if (record.PremiumBand === '500-520') {
-                    console.log(`DIAGNOSTIC - Filtering out 500-520 record with PremiumOverSwap=${record.PremiumOverSwap}, filter range: [${state.filters.premiumRange[0]}-${state.filters.premiumRange[1]}]`);
-                }
+                // For records with explicit PremiumOverSwap values, filter based on that
                 return false;
             }
             
@@ -2224,6 +2233,8 @@ function populatePremiumBandSelect(bands) {
     bands.forEach(band => {
         const chip = document.createElement('div');
         chip.className = 'premium-band-chip';
+        // Set both data-band attribute and dataset.value for consistency
+        chip.setAttribute('data-band', band);
         chip.dataset.value = band;
         
         // Check if this band is already selected
@@ -2244,20 +2255,37 @@ function populatePremiumBandSelect(bands) {
         // Add click event listener
         chip.addEventListener('click', function() {
             this.classList.toggle('selected');
-            const value = this.dataset.value;
+            const value = this.getAttribute('data-band') || this.dataset.value;
+            
+            // Initialize lenderMarketShare state if needed
+            if (!state.lenderMarketShare) {
+                state.lenderMarketShare = { selectedPremiumBands: [] };
+            }
+            
+            // For backward compatibility
+            if (!state.selectedPremiumBands) {
+                state.selectedPremiumBands = [];
+            }
             
             if (this.classList.contains('selected')) {
                 // Add to selected bands if not already there
-                if (!state.selectedPremiumBands.includes(value)) {
-                    state.selectedPremiumBands.push(value);
+                if (!state.lenderMarketShare.selectedPremiumBands.includes(value)) {
+                    state.lenderMarketShare.selectedPremiumBands.push(value);
+                    state.selectedPremiumBands.push(value); // For backward compatibility
                 }
             } else {
                 // Remove from selected bands
-                state.selectedPremiumBands = state.selectedPremiumBands.filter(b => b !== value);
+                state.lenderMarketShare.selectedPremiumBands = state.lenderMarketShare.selectedPremiumBands.filter(b => b !== value);
+                state.selectedPremiumBands = state.selectedPremiumBands.filter(b => b !== value); // For backward compatibility
             }
             
             // Update counter
-            counter.textContent = `${state.selectedPremiumBands.length} selected`;
+            counter.textContent = `${state.lenderMarketShare.selectedPremiumBands.length} selected`;
+            
+            console.log('Lender Market Share: Premium bands selected after click:', state.lenderMarketShare.selectedPremiumBands);
+            
+            // Important: Apply the market share analysis to update the table
+            applyMarketShareAnalysis();
         });
         
         container.appendChild(chip);
@@ -2489,6 +2517,8 @@ function aggregateLenderMarketShare(selectedBands) {
             });
         }
         
+        // Make sure we're processing records for all the selected bands
+        // This is the critical fix - ensure we're checking the band is in selectedBands
         if (lender && selectedBands.includes(band)) {
             const loanAmount = r.Loan || 0;
             lenderData[lender][band] += loanAmount;
@@ -2605,15 +2635,72 @@ function aggregateLenderMarketShare(selectedBands) {
 }
 
 function applyMarketShareAnalysis() {
-    // Get selected bands from state (now maintained by the chip click handlers)
-    const selectedBands = state.selectedPremiumBands || [];
+    console.log('DIAGNOSTIC - applyMarketShareAnalysis called');
     
-    // DIAGNOSTIC: Check if 500-520 band is selected
+    // Get selected premium bands directly from the UI
+    const selectedChips = document.querySelectorAll('#premium-bands-container .premium-band-chip.selected');
+    console.log('DIAGNOSTIC - Selected chips found:', selectedChips.length);
+    
+    // Debug each selected chip
+    selectedChips.forEach((chip, index) => {
+        console.log(`DIAGNOSTIC - Selected chip ${index}:`, {
+            element: chip,
+            'data-band': chip.getAttribute('data-band'),
+            'dataset.value': chip.dataset.value,
+            className: chip.className
+        });
+    });
+    
+    // Get selected bands using both data-band attribute and dataset.value as fallback
+    const selectedBands = Array.from(selectedChips).map(chip => {
+        // Try to get the band from data-band attribute first
+        const band = chip.getAttribute('data-band');
+        // If data-band is not available, try dataset.value
+        return band || chip.dataset.value;
+    }).filter(Boolean);
+    
+    // DIAGNOSTIC: Log the selected bands
     console.log('DIAGNOSTIC - Selected premium bands for market share analysis:', selectedBands);
     console.log('DIAGNOSTIC - 500-520 band is selected:', selectedBands.includes('500-520'));
     
-    // Save the selected bands in state
+    // Save the selected bands in the lenderMarketShare state
+    if (!state.lenderMarketShare) {
+        state.lenderMarketShare = {};
+    }
+    state.lenderMarketShare.selectedPremiumBands = selectedBands;
+    
+    // For backward compatibility
+    if (!state.marketShareFilters) {
+        state.marketShareFilters = {};
+    }
     state.marketShareFilters.selectedPremiumBands = selectedBands;
+    
+    console.log('DIAGNOSTIC - State after updating selected bands:', {
+        'state.lenderMarketShare.selectedPremiumBands': state.lenderMarketShare.selectedPremiumBands,
+        'state.marketShareFilters.selectedPremiumBands': state.marketShareFilters.selectedPremiumBands
+    });
+    
+    // Ensure we have at least one band selected, otherwise default to '0-20'
+    if (selectedBands.length === 0) {
+        state.lenderMarketShare.selectedPremiumBands = ['0-20'];
+        state.marketShareFilters.selectedPremiumBands = ['0-20'];
+        
+        console.log('DIAGNOSTIC - No bands selected, defaulting to 0-20');
+        
+        // Update the UI to reflect this default selection
+        const chips = document.querySelectorAll('#premium-bands-container .premium-band-chip');
+        chips.forEach(chip => {
+            if (chip.getAttribute('data-band') === '0-20' || chip.dataset.value === '0-20') {
+                chip.classList.add('selected');
+            }
+        });
+        
+        // Update counter
+        const counter = document.getElementById('premium-bands-counter');
+        if (counter) {
+            counter.textContent = '1 selected';
+        }
+    }
     
     // Update the market share table
     updateMarketShareTable();
@@ -2621,6 +2708,8 @@ function applyMarketShareAnalysis() {
 
 // New function to update the market share table based on current filters
 function updateMarketShareTable() {
+    console.log('DIAGNOSTIC - updateMarketShareTable called');
+    
     // Make sure we have filtered data to work with
     if (!state.filteredData || !Array.isArray(state.filteredData)) {
         console.error('Cannot update market share table: filtered data is not available');
@@ -2630,16 +2719,22 @@ function updateMarketShareTable() {
     // Use the currently filtered data (which respects the top filters)
     const data = state.filteredData;
     
-    // Make sure we have market share filters initialized
+    // Make sure we have lender market share state initialized
+    if (!state.lenderMarketShare) {
+        state.lenderMarketShare = { selectedPremiumBands: [] };
+    }
+    
+    // For backward compatibility
     if (!state.marketShareFilters) {
         state.marketShareFilters = { selectedPremiumBands: [] };
     }
     
-    // Get the selected premium bands
-    const selectedBands = state.marketShareFilters.selectedPremiumBands;
+    // Get the selected premium bands directly from the state
+    const selectedBands = state.lenderMarketShare.selectedPremiumBands;
+    console.log('DIAGNOSTIC - Selected bands from state:', selectedBands);
     
     if (!selectedBands || selectedBands.length === 0) {
-        // No bands selected, nothing to update
+        console.log('DIAGNOSTIC - No bands selected, nothing to update');
         return;
     }
     
@@ -2681,6 +2776,7 @@ function updateMarketShareTable() {
     }
     
     // Aggregate and render
+    console.log('DIAGNOSTIC - About to call aggregateLenderMarketShare with bands:', selectedBands);
     const dataForRender = aggregateLenderMarketShare(selectedBands);
     state.lenderMarketShareData = dataForRender;
     
@@ -2691,6 +2787,7 @@ function updateMarketShareTable() {
         console.log('DIAGNOSTIC - 500-520 band is missing from aggregated data bandTotals');
     }
     
+    console.log('DIAGNOSTIC - Calling renderLenderMarketShareTable with bands:', selectedBands);
     renderLenderMarketShareTable(dataForRender, selectedBands);
 }
 
@@ -2734,7 +2831,23 @@ function renderLenderMarketShareTable(data, selectedBands) {
     const columns = [
         { title: 'Lender', field: 'Lender', frozen: true, headerSort: true }
     ];
-    selectedBands.forEach(band => {
+    
+    // Only use the bands that were actually selected
+    const actualSelectedBands = selectedBands.filter(band => {
+        // Verify this band exists in the data
+        const exists = data.bandTotals && data.bandTotals[band] !== undefined;
+        if (!exists) {
+            console.log(`DIAGNOSTIC - Band ${band} was selected but not found in data.bandTotals`);
+        }
+        return exists;
+    });
+    
+    // Log the actual bands being used
+    console.log('DIAGNOSTIC - Actual bands used in table:', actualSelectedBands);
+    console.log('DIAGNOSTIC - All available bands in data.bandTotals:', Object.keys(data.bandTotals || {}));
+    
+    // Use the verified bands to build columns
+    actualSelectedBands.forEach(band => {
         columns.push({
             title: band,
             columns: [
@@ -2879,9 +2992,14 @@ function renderLenderMarketShareTable(data, selectedBands) {
         ]
     });
     // Prepare data rows
-    const rows = data.lenders.map(lender => {
+    const tableData = [];
+    
+    // Add data for each lender
+    data.lenders.forEach(lender => {
         const row = { Lender: lender };
-        selectedBands.forEach(band => {
+        
+        // Add data for each band - use the actual selected bands that exist in the data
+        actualSelectedBands.forEach(band => {
             row[band] = data.lenderData[lender][band];
             row[band + '_pct'] = data.lenderData[lender][band + '_pct'];
             row[band + '_below80'] = data.lenderData[lender][band + '_below80'];
@@ -2893,20 +3011,24 @@ function renderLenderMarketShareTable(data, selectedBands) {
         row.Total_pct = data.lenderData[lender].Total_pct;
         row.Total_below80 = data.lenderData[lender].Total_below80;
         row.Total_below80_pct = data.lenderData[lender].Total_below80_pct;
+        row.Total = data.lenderData[lender].Total;
+        row.Total_pct = data.lenderData[lender].Total_pct;
+        row.Total_below80 = data.lenderData[lender].Total_below80;
+        row.Total_below80_pct = data.lenderData[lender].Total_below80_pct;
         row.Total_above80 = data.lenderData[lender].Total_above80;
         row.Total_above80_pct = data.lenderData[lender].Total_above80_pct;
-        return row;
+        tableData.push(row);
     });
     // Add summary row
-    rows.push(data.summary);
+    tableData.push(data.summary);
     // Render
     state.marketShareTable = new Tabulator(elements.marketShareTable, {
-        data: rows,
+        data: tableData,
         columns: columns,
         layout: 'fitColumns',
         height: '450px',
         movableColumns: true,
-        initialSort: [{ column: selectedBands[0], dir: 'desc' }],
+        initialSort: [{ column: actualSelectedBands.length > 0 ? actualSelectedBands[0] : 'Lender', dir: 'desc' }],
         rowFormatter: function(row) {
             if (row.getData().Lender === 'Total Market') {
                 row.getElement().style.fontWeight = 'bold';
@@ -3102,10 +3224,15 @@ function renderHeatmap(heatmapData, mode = 'lender', sortBy = null, sortDirectio
     sortedLenders.forEach(lender => {
         const row = document.createElement('tr');
         
-        // Add lender name cell
+        // Add lender name cell with truncation
         const lenderCell = document.createElement('th');
         lenderCell.textContent = lender;
         lenderCell.setAttribute('scope', 'row');
+        lenderCell.style.maxWidth = '150px';
+        lenderCell.style.overflow = 'hidden';
+        lenderCell.style.textOverflow = 'ellipsis';
+        lenderCell.style.whiteSpace = 'nowrap';
+        lenderCell.title = lender; // Show full name on hover
         row.appendChild(lenderCell);
         
         // Add data cells
@@ -3566,18 +3693,28 @@ function createLineChartConfig(labels, datasets) {
                     }
                 },
                 tooltip: {
-                    mode: 'index',
-                    intersect: false,
+                    mode: 'nearest',
+                    intersect: true,
                     callbacks: {
+                        title: function(context) {
+                            return context[0].label;
+                        },
                         label: function(context) {
-                            let label = context.dataset.label || '';
-                            if (label) {
-                                label += ': ';
+                            const lender = context.dataset.label || '';
+                            const percentage = context.parsed.y !== null ? context.parsed.y.toFixed(1) + '%' : '0.0%';
+                            
+                            // Get the total lending amount for this lender in this month
+                            const monthIndex = context.dataIndex;
+                            const monthKey = context.chart.data.monthKeys[monthIndex];
+                            const lenderData = context.chart.data.lenderData;
+                            
+                            if (lenderData && lenderData[monthKey] && lenderData[monthKey][lender]) {
+                                const amount = lenderData[monthKey][lender];
+                                const formattedAmount = formatCurrency(amount);
+                                return `${lender}: ${percentage} (${formattedAmount})`;
                             }
-                            if (context.parsed.y !== null) {
-                                label += context.parsed.y.toFixed(1) + '%';
-                            }
-                            return label;
+                            
+                            return `${lender}: ${percentage}`;
                         }
                     }
                 }
@@ -3755,7 +3892,22 @@ function populatePremiumBands() {
         // Add click event listener to toggle selection
         chip.addEventListener('click', function() {
             this.classList.toggle('selected');
+            
+            // Get all selected bands directly from the UI - specifically from trends container
+            const selectedChips = document.querySelectorAll('#trends-premium-bands-container .premium-band-chip.selected');
+            const selectedBands = Array.from(selectedChips).map(chip => chip.getAttribute('data-band')).filter(Boolean);
+            console.log('Market Share Trends: Premium bands selected after click:', selectedBands);
+            
+            // Update the trends-specific state with the selected bands
+            if (!state.marketShareTrends) {
+                state.marketShareTrends = {};
+            }
+            state.marketShareTrends.selectedPremiumBands = [...selectedBands];
+            
+            // Update the counter display
             updateSelectedBandsCount();
+            
+            // No need to call applyMarketShareAnalysis() here as this is for the trends chart
         });
         
         elements.trendsPremiumBandsContainer.appendChild(chip);
@@ -3772,116 +3924,120 @@ function populatePremiumBands() {
     console.log('Premium bands populated successfully');
 }
 
-// Update the count of selected premium bands
+// Update the count of selected premium bands for the Market Share Trends section
 function updateSelectedBandsCount() {
     if (!elements.trendsPremiumBandsCounter) return;
     
-    const selectedCount = document.querySelectorAll('#trends-premium-bands-container .premium-band-chip.selected').length;
+    const selectedChips = document.querySelectorAll('#trends-premium-bands-container .premium-band-chip.selected');
+    const selectedCount = selectedChips.length;
     elements.trendsPremiumBandsCounter.textContent = `${selectedCount} selected`;
+    
+    // Update the trends-specific state with the selected bands
+    const selectedBands = Array.from(selectedChips).map(chip => chip.getAttribute('data-band')).filter(Boolean);
+    if (!state.marketShareTrends) {
+        state.marketShareTrends = {};
+    }
+    state.marketShareTrends.selectedPremiumBands = selectedBands;
+    
+    // Log the count for debugging
+    console.log(`DIAGNOSTIC - Updated trends premium bands counter: ${selectedCount} selected`);
+    console.log('DIAGNOSTIC - Updated trends premium bands state:', state.marketShareTrends.selectedPremiumBands);
 }
 
 // This is a duplicate function that has been removed. The actual resetMarketShareTrends function is defined earlier in the code.
 
 // Update the market share trends chart based on selected premium bands
 function updateMarketShareTrendsChart() {
-    try {
-        console.log('Updating market share trends chart...');
-        
-        // Make sure we have the element references
-        if (!elements.marketShareTrendsChart) {
-            elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
-            console.log('Re-fetched market share trends chart element:', elements.marketShareTrendsChart ? 'found' : 'not found');
-        }
-        
-        // Validate state.esisData exists
-        if (!state.esisData || !Array.isArray(state.esisData) || state.esisData.length === 0) {
-            console.warn('No ESIS data available for market share trends chart');
-            if (elements.marketShareTrendsChart) {
-                elements.marketShareTrendsChart.innerHTML = 
-                    '<div class="no-data-message">No data available. Please upload and analyze data files first.</div>';
-            }
-            return;
-        }
-        
-        // Get selected premium bands
-        const selectedPremiumBandChips = document.querySelectorAll('#trends-premium-bands-container .premium-band-chip.selected');
-        console.log(`Found ${selectedPremiumBandChips.length} selected premium band chips`);
-        
-        const selectedBands = Array.from(selectedPremiumBandChips).map(chip => chip.getAttribute('data-band'));
-        console.log('Selected premium bands:', selectedBands);
-        
-        // If no bands are selected, show a message and return
-        if (selectedBands.length === 0) {
-            console.warn('No premium bands selected for market share trends chart');
-            if (elements.marketShareTrendsChart) {
-                elements.marketShareTrendsChart.innerHTML = 
-                    '<div class="no-data-message">Please select at least one premium band to view trends.</div>';
-            }
-            return;
-        }
-        
-        // Show loading indicator
-        if (elements.marketShareTrendsChart) {
-            elements.marketShareTrendsChart.innerHTML = 
-                '<div class="no-data-message"><div class="spinner"></div>Processing data...</div>';
-        }
-        
-        // Process the data in the next tick to allow UI to update
-        setTimeout(() => {
-            try {
-                // Set default date range if not already set
-                if (!state.filters.dateRange || !state.filters.dateRange[0] || !state.filters.dateRange[1]) {
-                    console.warn('Date range not properly set in filters, using all available data');
-                    
-                    // Instead of throwing an error, let's use all the data
-                    const filteredByDate = state.esisData;
-                    console.log(`Using all ${filteredByDate.length} records for trends chart`);
-                    
-                    // Continue processing with all data
-                    processMarketShareTrendsData(filteredByDate, selectedBands);
-                    return;
-                }
-                
-                console.log('Using date range filter:', state.filters.dateRange);
-                
-                // Get data filtered by the main date range filter (but NOT by lender filter)
-                const filteredByDate = state.esisData.filter(record => {
-                    // Skip records with invalid dates
-                    if (!record.Month) return false;
-                    
-                    // Apply only date range filter, not lender filter
-                    return record.Month >= state.filters.dateRange[0] && record.Month <= state.filters.dateRange[1];
-                });
-                
-                if (filteredByDate.length === 0) {
-                    throw new Error('No data matches the selected date range. Please adjust your filters.');
-                }
-                
-                // Continue processing with filtered data
-                processMarketShareTrendsData(filteredByDate, selectedBands);
-            } catch (innerError) {
-                console.error('Error in date filtering:', innerError);
-                if (elements.marketShareTrendsChart) {
-                    elements.marketShareTrendsChart.innerHTML = 
-                        `<div class="no-data-message error-message">
-                            <h3>Error Processing Data</h3>
-                            <p>${innerError.message}</p>
-                            <button class="retry-btn" onclick="updateMarketShareTrendsChart()">Retry</button>
-                        </div>`;
-                }
-            }
-        }, 10);
-    } catch (outerError) {
-        console.error('Unexpected error in updateMarketShareTrendsChart:', outerError);
-        if (elements.marketShareTrendsChart) {
-            elements.marketShareTrendsChart.innerHTML = 
-                `<div class="no-data-message error-message">
-                    <h3>Unexpected Error</h3>
-                    <p>${outerError.message}</p>
-                    <button class="retry-btn" onclick="updateMarketShareTrendsChart()">Retry</button>
-                </div>`;
-        }
+    console.log('Updating market share trends chart...');
+    
+    // Make sure we have the element references
+    if (!elements.marketShareTrendsChart) {
+        elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
+        console.log('Re-fetched market share trends chart element:', elements.marketShareTrendsChart ? 'found' : 'not found');
     }
+    
+    // Validate state.esisData exists
+    if (!state.esisData || !Array.isArray(state.esisData) || state.esisData.length === 0) {
+        console.warn('No ESIS data available for market share trends chart');
+        if (elements.marketShareTrendsChart) {
+            elements.marketShareTrendsChart.innerHTML = 
+                '<div class="no-data-message">No data available. Please upload and analyze data files first.</div>';
+        }
+        return;
+    }
+    
+    // Show loading state
+    elements.marketShareTrendsChart.innerHTML = '<div class="loading-message">Loading chart data...</div>';
+    
+    // Process in next tick to allow UI to update
+    setTimeout(() => {
+        try {
+            // Get selected premium bands specifically from the trends container
+            const selectedBands = [];
+            const chips = document.querySelectorAll('#trends-premium-bands-container .premium-band-chip.selected');
+            chips.forEach(chip => {
+                const band = chip.getAttribute('data-band');
+                if (band) selectedBands.push(band);
+            });
+            
+            // If no bands are selected, select all bands by default
+            if (selectedBands.length === 0) {
+                console.log('No premium bands selected for trends chart, defaulting to all bands');
+                document.querySelectorAll('#trends-premium-bands-container .premium-band-chip').forEach(chip => {
+                    chip.classList.add('selected');
+                    const band = chip.getAttribute('data-band');
+                    if (band) selectedBands.push(band);
+                });
+                updateSelectedBandsCount();
+            }
+            
+            // Save the selected bands in the trends-specific state
+            if (!state.marketShareTrends) {
+                state.marketShareTrends = {};
+            }
+            state.marketShareTrends.selectedPremiumBands = [...selectedBands];
+            
+            console.log('Market Share Trends using bands:', state.marketShareTrends.selectedPremiumBands);
+            
+            console.log('Using date range filter:', state.filters.dateRange);
+            
+            // Get data filtered by the main date range filter (but NOT by lender filter)
+            const filteredByDate = state.esisData.filter(record => {
+                // Skip records with invalid dates
+                if (!record.Month) return false;
+                
+                // Apply date range filter
+                const inDateRange = !state.filters.dateRange || 
+                    (record.Month >= state.filters.dateRange[0] && 
+                     record.Month <= state.filters.dateRange[1]);
+                
+                // Apply premium band filter
+                const inSelectedBands = selectedBands.length === 0 || selectedBands.includes(record.PremiumBand);
+                
+                return inDateRange && inSelectedBands;
+            });
+            
+            if (filteredByDate.length === 0) {
+                throw new Error('No data matches the selected filters. Please adjust your date range or premium band selection.');
+            }
+            
+            // Continue processing with filtered data
+            processMarketShareTrendsData(filteredByDate, selectedBands);
+            
+        } catch (error) {
+            console.error('Error updating market share trends chart:', error);
+            if (elements.marketShareTrendsChart) {
+                elements.marketShareTrendsChart.innerHTML = 
+                    `<div class="no-data-message error-message">
+                        <h3>Error</h3>
+                        <p>${error.message}</p>
+                        <button class="btn btn-primary mt-2" onclick="updateMarketShareTrendsChart()">
+                            Try Again
+                        </button>
+                    </div>`;
+            }
+        }
+    }, 10);
 }
 
 // Process data for the market share trends chart
@@ -3903,17 +4059,17 @@ function processMarketShareTrendsData(filteredData, selectedBands) {
         // Group data by month and lender for the chart
         const monthlyData = groupByMonthAndLender(filteredByBands);
         
-        // Find lenders who have market share in any month
-        const activeLenders = findActiveLenders(monthlyData);
+        // Find lenders who were in the top 5 by market share at any point
+        const topLenders = findTopLenders(monthlyData, 5);
         
-        if (activeLenders.length === 0) {
+        if (topLenders.length === 0) {
             throw new Error('No lenders found with market share in the selected data.');
         }
         
-        console.log(`Found ${activeLenders.length} active lenders for the trends chart`);
+        console.log(`Found ${topLenders.length} top lenders for the trends chart`);
         
-        // Render the chart
-        renderTrendsChart(monthlyData, activeLenders);
+        // Render the chart with only the top lenders
+        renderTrendsChart(monthlyData, topLenders);
         
         console.log('Market share trends chart updated successfully');
     } catch (error) {
@@ -3944,6 +4100,23 @@ function groupByMonthAndLender(data) {
     const months = [];
     const monthLabels = [];
     
+    // Get the date range filter to ensure we only include months within the selected range
+    const dateRangeStart = state.filters.dateRange ? new Date(state.filters.dateRange[0]) : null;
+    const dateRangeEnd = state.filters.dateRange ? new Date(state.filters.dateRange[1]) : null;
+    
+    // If we have a date range, set time to beginning/end of month for proper comparison
+    if (dateRangeStart) {
+        dateRangeStart.setDate(1);
+        dateRangeStart.setHours(0, 0, 0, 0);
+    }
+    
+    if (dateRangeEnd) {
+        // Set to last day of the month
+        dateRangeEnd.setMonth(dateRangeEnd.getMonth() + 1);
+        dateRangeEnd.setDate(0);
+        dateRangeEnd.setHours(23, 59, 59, 999);
+    }
+    
     // Group data by month and lender
     data.forEach(record => {
         const date = new Date(record.DocumentDate);
@@ -3953,6 +4126,11 @@ function groupByMonthAndLender(data) {
         
         // Skip if missing essential data
         if (!lender) return;
+        
+        // Check if this month is within the selected date range
+        const monthDate = new Date(date.getFullYear(), date.getMonth(), 1);
+        if (dateRangeStart && monthDate < dateRangeStart) return;
+        if (dateRangeEnd && monthDate > dateRangeEnd) return;
         
         // Add month to tracking array if not already present
         if (!result[monthKey]) {
@@ -3964,7 +4142,7 @@ function groupByMonthAndLender(data) {
             months.push({
                 key: monthKey,
                 label: monthLabel,
-                date: date
+                date: monthDate
             });
         }
         
@@ -3995,6 +4173,9 @@ function groupByMonthAndLender(data) {
         }
     });
     
+    // Log the months being displayed for debugging
+    console.log('Displaying months:', months.map(m => m.label).join(', '));
+    
     return {
         months: months.map(m => m.key),
         monthLabels: months.map(m => m.label),
@@ -4017,6 +4198,40 @@ function findActiveLenders(monthlyData) {
     });
     
     return Array.from(lenderSet).sort();
+}
+
+// Find lenders who were in the top 5 by market share at any point during the time range
+function findTopLenders(monthlyData, maxLenders = 5) {
+    // Track which lenders were in the top N for any month
+    const topLendersSet = new Set();
+    
+    // For each month, find the top lenders
+    Object.keys(monthlyData.data).forEach(month => {
+        const monthData = monthlyData.data[month];
+        const lenderShares = [];
+        
+        // Get all lenders and their market share percentages for this month
+        Object.keys(monthData.lenders).forEach(lender => {
+            // Only include actual lender names, not percentage keys
+            if (!lender.endsWith('_pct')) {
+                lenderShares.push({
+                    lender: lender,
+                    share: monthData.lenders[lender + '_pct'] || 0
+                });
+            }
+        });
+        
+        // Sort by market share (descending)
+        lenderShares.sort((a, b) => b.share - a.share);
+        
+        // Add the top N lenders to our set
+        lenderShares.slice(0, maxLenders).forEach(item => {
+            topLendersSet.add(item.lender);
+        });
+    });
+    
+    // Convert set to sorted array
+    return Array.from(topLendersSet).sort();
 }
 
 // Render the market share trends chart
@@ -4045,7 +4260,7 @@ function renderTrendsChart(monthlyData, lenders) {
             throw new Error('No lenders available to display');
         }
         
-        console.log(`Rendering chart with ${monthlyData.months.length} months and ${lenders.length} lenders`);
+        console.log(`Rendering chart with ${monthlyData.months.length} months and ${lenders.length} top lenders`);
         
         // Create canvas for the chart
         elements.marketShareTrendsChart.innerHTML = '<canvas id="trends-chart"></canvas>';
@@ -4059,6 +4274,12 @@ function renderTrendsChart(monthlyData, lenders) {
         if (!ctx) {
             throw new Error('Failed to get canvas context');
         }
+        
+        // Add a note about showing only top lenders
+        const noteDiv = document.createElement('div');
+        noteDiv.className = 'chart-note';
+        noteDiv.textContent = `Showing lenders who were in the top 5 by market share at any point during the selected time range. Total lenders shown: ${lenders.length}`;
+        elements.marketShareTrendsChart.insertBefore(noteDiv, canvas);
         
         // Prepare datasets for each lender
         const datasets = [];
@@ -4093,13 +4314,30 @@ function renderTrendsChart(monthlyData, lenders) {
             });
         });
         
+        // Prepare lender data for tooltips
+        const lenderData = {};
+        monthlyData.months.forEach((month) => {
+            lenderData[month] = {};
+            lenders.forEach(lender => {
+                const monthData = monthlyData.data[month];
+                if (monthData && monthData.lenders) {
+                    // Store the actual loan amount for this lender in this month
+                    lenderData[month][lender] = monthData.lenders[lender] || 0;
+                }
+            });
+        });
+        
         // Create and render the chart using our template
         const chartConfig = createLineChartConfig(monthlyData.monthLabels, datasets);
+        
+        // Add the month keys and lender data to the chart config for tooltip access
+        chartConfig.data.monthKeys = monthlyData.months;
+        chartConfig.data.lenderData = lenderData;
         
         try {
             // Attempt to create the chart
             new Chart(ctx, chartConfig);
-            console.log('Chart rendered successfully with', lenders.length, 'lenders');
+            console.log('Chart rendered successfully with', lenders.length, 'top lenders');
         } catch (chartError) {
             console.error('Error creating Chart.js chart:', chartError);
             
@@ -4190,14 +4428,22 @@ function exportTrendsData() {
         }
         
         // Get selected premium bands
-        const selectedBands = Array.from(
-            document.querySelectorAll('.premium-band-btn.selected')
-        ).map(btn => btn.getAttribute('data-band'));
+        const selectedBands = [];
+        const chips = document.querySelectorAll('.premium-band-chip.selected');
+        chips.forEach(chip => {
+            const band = chip.getAttribute('data-band');
+            if (band) selectedBands.push(band);
+        });
         
-        // If no bands are selected, show an error and return
+        // If no bands are selected, select all bands by default
         if (selectedBands.length === 0) {
-            showError('Please select at least one premium band to export data.');
-            return;
+            console.log('No premium bands selected, defaulting to all bands');
+            document.querySelectorAll('.premium-band-chip').forEach(chip => {
+                chip.classList.add('selected');
+                const band = chip.getAttribute('data-band');
+                if (band) selectedBands.push(band);
+            });
+            updateSelectedBandsCount();
         }
         
         // Validate date filters
