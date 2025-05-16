@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mortgage Market Analysis Tool</title>
+    <link rel="icon" href="Favicon.png" type="image/png">
     <link rel="stylesheet" href="https://unpkg.com/tabulator-tables@5.4.4/dist/css/tabulator.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -93,8 +94,11 @@
             <h2>Lender Market Share Analysis</h2>
             <div class="market-share-controls">
                 <div class="filter-group">
-                    <label for="premium-band-select">Select Premium Bands:</label>
-                    <select id="premium-band-select" multiple></select>
+                    <label class="premium-bands-label">Select Premium Bands:</label>
+                    <div id="premium-bands-container" class="premium-bands-container">
+                        <!-- Checkboxes will be dynamically added here -->
+                    </div>
+                    <div class="premium-bands-counter" id="premium-bands-counter">0 selected</div>
                 </div>
                 <button id="apply-market-share">Apply</button>
             </div>
@@ -104,6 +108,46 @@
             <div id="market-share-table"></div>
         </section>
         
+        <section class="heatmap-section hidden" id="heatmap-section">
+            <h2>Market Distribution Heatmap</h2>
+            <div class="heatmap-container">
+                <div class="heatmap-controls">
+                    <label>Visualization Mode:</label>
+                    <div class="toggle-switch">
+                        <input type="radio" id="lender-mode" name="heatmap-mode" value="lender" checked>
+                        <label for="lender-mode">Distribution of Each Lender's Volume</label>
+                        
+                        <input type="radio" id="premium-mode" name="heatmap-mode" value="premium">
+                        <label for="premium-mode">Market Share Within Premium Bands</label>
+                    </div>
+                </div>
+                
+                <div id="heatmap-visualization"></div>
+            </div>
+        </section>
+        
+        <section class="market-share-trends hidden" id="market-share-trends-section">
+            <h2>Market Share Trends</h2>
+            <div class="premium-band-selector">
+                <h3>Price premium over swaps</h3>
+                <div class="premium-bands-container">
+                    <div class="premium-bands-grid" id="trends-premium-bands-grid">
+                        <!-- Premium band buttons will be generated dynamically -->
+                    </div>
+                </div>
+                
+                <div class="selection-controls">
+                    <div class="selection-count"><span id="bands-selected-count">0</span> selected</div>
+                    <button id="trends-apply-btn" class="apply-btn">Apply</button>
+                    <button id="trends-export-btn" class="export-btn">Export Data</button>
+                </div>
+            </div>
+
+            <div id="market-share-trends-chart" class="trends-chart-container">
+                <!-- Chart will be rendered here -->
+            </div>
+        </section>
+
         <section id="error-container" class="hidden">
             <div class="error-message">
                 <h3>Error</h3>
@@ -117,6 +161,7 @@
     <script src="https://unpkg.com/papaparse@5.3.2/papaparse.min.js"></script>
     <script src="https://unpkg.com/tabulator-tables@5.4.4/dist/js/tabulator.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

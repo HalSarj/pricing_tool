@@ -25,69 +25,223 @@ const state = {
 
 // DOM Elements
 const elements = {
-    esisFileInput: document.getElementById('esis-file'),
-    swapFileInput: document.getElementById('swap-file'),
-    esisFileInfo: document.getElementById('esis-file-info'),
-    swapFileInfo: document.getElementById('swap-file-info'),
-    analyzeBtn: document.getElementById('analyze-btn'),
-    loadingIndicator: document.getElementById('loading-indicator'),
-    filtersSection: document.getElementById('filters-section'),
-    resultsSection: document.getElementById('results-section'),
-    resultsTable: document.getElementById('results-table'),
-    exportBtn: document.getElementById('export-btn'),
-    applyFiltersBtn: document.getElementById('apply-filters'),
-    resetFiltersBtn: document.getElementById('reset-filters'),
-    dateStart: document.getElementById('date-start'),
-    dateEnd: document.getElementById('date-end'),
-    lenderFilter: document.getElementById('lender-filter'),
-    premiumMin: document.getElementById('premium-min'),
-    premiumMax: document.getElementById('premium-max'),
-    productType: document.getElementById('product-type'),
-    purchaseType: document.getElementById('purchase-type'),
-    ltvFilter: document.getElementById('ltv-filter'),
-    productTermFilter: document.getElementById('product-term-filter'),
+    // Create a function to safely get DOM elements
+    getElement: function(id) {
+        const element = document.getElementById(id);
+        if (!element) {
+            console.warn(`Element with ID '${id}' not found in the DOM`);
+        }
+        return element;
+    },
+    
+    // Create a function to safely get element properties
+    getOptions: function(selectElement) {
+        if (!selectElement) return [];
+        return selectElement.options || [];
+    },
+    
+    getSelectedOptions: function(selectElement) {
+        if (!selectElement) return [];
+        return selectElement.selectedOptions || [];
+    }
+};
+
+// Initialize elements object with DOM references
+function initElementReferences() {
+    // File input elements
+    elements.esisFileInput = elements.getElement('esis-file');
+    elements.swapFileInput = elements.getElement('swap-file');
+    elements.esisFileInfo = elements.getElement('esis-file-info');
+    elements.swapFileInfo = elements.getElement('swap-file-info');
+    
+    // Button elements
+    elements.analyzeBtn = elements.getElement('analyze-btn');
+    elements.exportBtn = elements.getElement('export-btn');
+    elements.applyFiltersBtn = elements.getElement('apply-filters');
+    elements.resetFiltersBtn = elements.getElement('reset-filters');
+    
+    // Section elements
+    elements.loadingIndicator = elements.getElement('loading-indicator');
+    elements.filtersSection = elements.getElement('filters-section');
+    elements.resultsSection = elements.getElement('results-section');
+    elements.resultsTable = elements.getElement('results-table');
+    
+    // Filter elements
+    elements.dateStart = elements.getElement('date-start');
+    elements.dateEnd = elements.getElement('date-end');
+    elements.lenderFilter = elements.getElement('lender-filter');
+    elements.productType = elements.getElement('product-type');
+    elements.purchaseType = elements.getElement('purchase-type');
+    elements.ltvFilter = elements.getElement('ltv-filter');
+    elements.productTermFilter = elements.getElement('product-term-filter');
+    
     // Market share analysis elements
-    marketShareSection: document.getElementById('market-share-section'),
-    premiumBandSelect: document.getElementById('premium-band-select'),
-    applyMarketShareBtn: document.getElementById('apply-market-share'),
-    marketShareTable: document.getElementById('market-share-table'),
-    exportMarketShareBtn: document.getElementById('export-market-share-btn'),
+    elements.marketShareSection = elements.getElement('market-share-section');
+    elements.premiumBandsContainer = elements.getElement('premium-bands-container');
+    elements.premiumBandsCounter = elements.getElement('premium-bands-counter');
+    elements.applyMarketShareBtn = elements.getElement('apply-market-share');
+    elements.marketShareTable = elements.getElement('market-share-table');
+    elements.exportMarketShareBtn = elements.getElement('export-market-share-btn');
+    
+    // Market share trends elements
+    elements.marketShareTrendsSection = elements.getElement('market-share-trends-section');
+    elements.trendsPremiumBandsGrid = elements.getElement('trends-premium-bands-grid');
+    elements.bandsSelectedCount = elements.getElement('bands-selected-count');
+    elements.trendsApplyBtn = elements.getElement('trends-apply-btn');
+    elements.trendsExportBtn = elements.getElement('trends-export-btn');
+    elements.marketShareTrendsChart = elements.getElement('market-share-trends-chart');
+    
+    // Heatmap elements
+    elements.heatmapSection = elements.getElement('heatmap-section');
+    elements.heatmapVisualization = elements.getElement('heatmap-visualization');
+    elements.heatmapModeRadios = document.querySelectorAll('input[name="heatmap-mode"]');
+    
     // Error elements
-    errorContainer: document.getElementById('error-container'),
-    errorText: document.getElementById('error-text'),
-    dismissError: document.getElementById('dismiss-error')
+    elements.errorContainer = elements.getElement('error-container');
+    elements.errorText = elements.getElement('error-text');
+    elements.dismissError = elements.getElement('dismiss-error');
+    
+    console.log('Element references initialized');
 };
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', initializeApp);
 
 function initializeApp() {
+    // Initialize element references first
+    initElementReferences();
     
-    // Set up event listeners
-    elements.esisFileInput.addEventListener('change', handleESISFileSelect);
-    elements.swapFileInput.addEventListener('change', handleSwapFileSelect);
-    elements.analyzeBtn.addEventListener('click', processData);
-    elements.exportBtn.addEventListener('click', exportData);
-    elements.applyFiltersBtn.addEventListener('click', applyFilters);
-    elements.resetFiltersBtn.addEventListener('click', resetFilters);
-    elements.dismissError.addEventListener('click', dismissError);
+    // Ensure heatmap elements exist in the DOM
+    ensureHeatmapElementsExist();
     
-    // Market share analysis event listeners
-    elements.applyMarketShareBtn.addEventListener('click', applyMarketShareAnalysis);
-    elements.exportMarketShareBtn.addEventListener('click', exportMarketShareData);
+    // Initialize Chart.js configuration
+    initChartJsConfig();
+    
+    // Initialize premium band selector for market share trends
+    initializePremiumBandSelector();
+    
+    // Set up event listeners with null checks
+    if (elements.esisFileInput) elements.esisFileInput.addEventListener('change', handleESISFileSelect);
+    if (elements.swapFileInput) elements.swapFileInput.addEventListener('change', handleSwapFileSelect);
+    if (elements.analyzeBtn) elements.analyzeBtn.addEventListener('click', processData);
+    if (elements.exportBtn) elements.exportBtn.addEventListener('click', exportData);
+    if (elements.applyFiltersBtn) elements.applyFiltersBtn.addEventListener('click', applyFilters);
+    if (elements.resetFiltersBtn) elements.resetFiltersBtn.addEventListener('click', resetFilters);
+    if (elements.dismissError) elements.dismissError.addEventListener('click', dismissError);
+    if (elements.applyMarketShareBtn) elements.applyMarketShareBtn.addEventListener('click', updateMarketShareTable);
+    if (elements.exportMarketShareBtn) elements.exportMarketShareBtn.addEventListener('click', exportMarketShareData);
     
     // Initialize filter controls
-    elements.premiumMin.addEventListener('change', validatePremiumRange);
-    elements.premiumMax.addEventListener('change', validatePremiumRange);
+    if (elements.premiumMin) elements.premiumMin.addEventListener('change', validatePremiumRange);
+    if (elements.premiumMax) elements.premiumMax.addEventListener('change', validatePremiumRange);
     
     // Add event listener for product term filter
     if (elements.productTermFilter) {
         elements.productTermFilter.addEventListener('change', applyFilters);
     }
     
-    // Product term filter event listener will be added after DOM is fully loaded
-    
     console.log('Mortgage Market Analysis Tool initialized');
+}
+
+// Function to ensure heatmap elements exist in the DOM
+function ensureHeatmapElementsExist() {
+    // Check if the heatmap section exists
+    let heatmapSection = document.getElementById('heatmap-section');
+    
+    // If not, create it
+    if (!heatmapSection) {
+        console.log('Creating missing heatmap section');
+        
+        // Create the heatmap section
+        heatmapSection = document.createElement('section');
+        heatmapSection.id = 'heatmap-section';
+        heatmapSection.className = 'heatmap-section hidden';
+        
+        // Create header
+        const header = document.createElement('h2');
+        header.textContent = 'Market Distribution Heatmap';
+        heatmapSection.appendChild(header);
+        
+        // Create container
+        const container = document.createElement('div');
+        container.className = 'heatmap-container';
+        
+        // Create controls
+        const controls = document.createElement('div');
+        controls.className = 'heatmap-controls';
+        
+        // Create label
+        const label = document.createElement('label');
+        label.textContent = 'Visualization Mode:';
+        controls.appendChild(label);
+        
+        // Create toggle switch
+        const toggleSwitch = document.createElement('div');
+        toggleSwitch.className = 'toggle-switch';
+        
+        // Create lender mode radio
+        const lenderRadio = document.createElement('input');
+        lenderRadio.type = 'radio';
+        lenderRadio.id = 'lender-mode';
+        lenderRadio.name = 'heatmap-mode';
+        lenderRadio.value = 'lender';
+        lenderRadio.checked = true;
+        
+        const lenderLabel = document.createElement('label');
+        lenderLabel.htmlFor = 'lender-mode';
+        lenderLabel.textContent = 'Distribution of Each Lender\'s Volume';
+        
+        // Create premium mode radio
+        const premiumRadio = document.createElement('input');
+        premiumRadio.type = 'radio';
+        premiumRadio.id = 'premium-mode';
+        premiumRadio.name = 'heatmap-mode';
+        premiumRadio.value = 'premium';
+        
+        const premiumLabel = document.createElement('label');
+        premiumLabel.htmlFor = 'premium-mode';
+        premiumLabel.textContent = 'Market Share Within Premium Bands';
+        
+        // Append radio buttons and labels
+        toggleSwitch.appendChild(lenderRadio);
+        toggleSwitch.appendChild(lenderLabel);
+        toggleSwitch.appendChild(premiumRadio);
+        toggleSwitch.appendChild(premiumLabel);
+        
+        controls.appendChild(toggleSwitch);
+        container.appendChild(controls);
+        
+        // Create visualization div
+        const visualization = document.createElement('div');
+        visualization.id = 'heatmap-visualization';
+        container.appendChild(visualization);
+        
+        heatmapSection.appendChild(container);
+        
+        // Add the heatmap section to the document
+        // Find the market share section to insert after it
+        const marketShareSection = document.getElementById('market-share-section');
+        if (marketShareSection) {
+            marketShareSection.parentNode.insertBefore(heatmapSection, marketShareSection.nextSibling);
+        } else {
+            // If market share section doesn't exist, try to insert after results section
+            const resultsSection = document.getElementById('results-section');
+            if (resultsSection) {
+                resultsSection.parentNode.insertBefore(heatmapSection, resultsSection.nextSibling);
+            } else {
+                // If neither section exists, add to the container
+                const appContainer = document.querySelector('.container');
+                if (appContainer) {
+                    appContainer.appendChild(heatmapSection);
+                } else {
+                    // Last resort: append to body
+                    document.body.appendChild(heatmapSection);
+                }
+            }
+        }
+        
+        console.log('Heatmap section created and added to DOM');
+    }
 }
 
 // File Handling Functions
@@ -232,6 +386,9 @@ async function processData() {
         // Enrich state.esisData with PremiumBand and Month
         state.esisData = enrichEsisData(state.esisData);
         
+        // Update premium band selector for market share trends
+        updatePremiumBandSelector();
+        
         // Log product type counts to verify both 2-year and 5-year products are present
         const twoYearCount = state.esisData.filter(r => r.NormalizedTerm === 24).length;
         const fiveYearCount = state.esisData.filter(r => r.NormalizedTerm === 60).length;
@@ -279,21 +436,48 @@ async function processData() {
             console.warn('Could not set initial market totals, processedData or its totals are missing.');
         }
 
-        // Update UI with results
+        // Update UI with results - always update filters first
         updateFilters();
         renderTable();
 
-        // --- Ensure premium bands are always populated after data load ---
-        if (state.processedData && state.processedData.premiumBands) {
-            populatePremiumBandSelect(state.processedData.premiumBands);
-            elements.marketShareSection.classList.remove('hidden');
-        } else {
-            elements.marketShareSection.classList.add('hidden');
-        }
-        resetMarketShareTable();
-        // Show filters and results sections
+        // --- Ensure all sections are shown and populated ---
+        // Show all sections
         elements.filtersSection.classList.remove('hidden');
         elements.resultsSection.classList.remove('hidden');
+        elements.marketShareSection.classList.remove('hidden');
+        elements.heatmapSection.classList.remove('hidden');
+        elements.marketShareTrendsSection.classList.remove('hidden');
+        
+        // Initialize heatmap visualization
+        updateHeatmap();
+        
+        // Make sure event listeners are attached to the radio buttons
+        attachHeatmapModeListeners();
+        
+        // Initialize Market Share section
+        if (state.processedData && state.processedData.premiumBands) {
+            populatePremiumBandSelect(state.processedData.premiumBands);
+        }
+        
+        // Initialize Market Share Trends section
+        updatePremiumBandSelector();
+        resetMarketShareTrends();
+        
+        // Log the state of filters for debugging
+        console.log('Filters after processing data:', JSON.stringify(state.filters));
+        
+        // Ensure we have date range set
+        if (!state.filters.dateRange || !state.filters.dateRange[0] || !state.filters.dateRange[1]) {
+            console.warn('Date range not properly set in filters, setting defaults');
+            // Set default date range if not already set
+            if (state.processedData && state.processedData.months && state.processedData.months.length > 0) {
+                state.filters.dateRange = [
+                    state.processedData.months[0],
+                    state.processedData.months[state.processedData.months.length - 1]
+                ];
+                console.log('Set default date range:', state.filters.dateRange);
+            }
+        }
         
         showLoading(false);
     } catch (error) {
@@ -894,7 +1078,7 @@ function findMatchingSwapRate(esisRecord) {
         // If within tolerance window, use this rate
         if (diffDays <= TOLERANCE_DAYS) {
             matchingRate = closestRate;
-            console.log(`Using swap rate from ${closestRate.effective_at.toISOString().split('T')[0]} for ${esisRecord.Provider} document dated ${documentDate.toISOString().split('T')[0]} (${diffDays} days difference)`);
+            // console.log(`Using swap rate from ${closestRate.effective_at.toISOString().split('T')[0]} for ${esisRecord.Provider} document dated ${documentDate.toISOString().split('T')[0]} (${diffDays} days difference)`);
         } else {
             // Track missing date ranges
             const yearMonth = documentDate.toISOString().substring(0, 7); // YYYY-MM format
@@ -904,7 +1088,7 @@ function findMatchingSwapRate(esisRecord) {
             state.swapRateTracking.missingDateRanges[yearMonth]++;
             
             // Log the exclusion
-            console.log(`No suitable swap rate found for ${esisRecord.Provider} on ${documentDate.toISOString().split('T')[0]}, excluding from analysis`);
+            //console.log(`No suitable swap rate found for ${esisRecord.Provider} on ${documentDate.toISOString().split('T')[0]}, excluding from analysis`);
             state.swapRateTracking.excludedRecords++;
             state.swapRateTracking.excludedLoanAmount += (esisRecord.Loan || 0);
             return null;
@@ -959,7 +1143,7 @@ function calculatePremiumOverSwap(esisRecord, swapRate) {
     // Their rates appear to be stored as 0.XX instead of X.XX%
     if (esisRecord.Provider === 'Nationwide Building Society' && esisRate < 0.5) {
         // Convert from 0.XX to 0.0XX (e.g., 0.49 to 0.049 for 4.9%)
-        console.log(`Applying Nationwide rate correction: ${esisRate} -> ${esisRate / 10}`);
+        // console.log(`Applying Nationwide rate correction: ${esisRate} -> ${esisRate / 10}`);
         esisRate = esisRate / 10;
     }
     // Check if the ESIS rate is likely in percentage format (e.g., 3.99 instead of 0.0399)
@@ -1541,27 +1725,37 @@ function updateFilters() {
         
         console.log(`Found ${lenders.length} unique lenders:`, lenders.slice(0, 10));
         
-        // Clear the existing dropdown options
-        while (elements.lenderFilter.firstChild) {
-            elements.lenderFilter.removeChild(elements.lenderFilter.firstChild);
+        // Clear the existing dropdown options with null check
+        if (!elements.lenderFilter) {
+            console.warn('Lender filter element not found in the DOM');
+            // Continue with other filters instead of returning early
+        } else {
+            while (elements.lenderFilter.firstChild) {
+                elements.lenderFilter.removeChild(elements.lenderFilter.firstChild);
+            }
+            
+            // Add "All Lenders" option
+            const allOption = document.createElement('option');
+            allOption.value = '';
+            allOption.textContent = '-- All Lenders --';
+            elements.lenderFilter.appendChild(allOption);
+            
+            // Add each lender as an option
+            lenders.forEach(lender => {
+                const option = document.createElement('option');
+                option.value = lender;
+                option.textContent = lender;
+                elements.lenderFilter.appendChild(option);
+            });
         }
         
-        // Add "All Lenders" option
-        const allOption = document.createElement('option');
-        allOption.value = '';
-        allOption.textContent = '-- All Lenders --';
-        elements.lenderFilter.appendChild(allOption);
+        // "All Lenders" option is now added in the block above
         
-        // Add each lender as an option
-        lenders.forEach(lender => {
-            const option = document.createElement('option');
-            option.value = lender;
-            option.textContent = lender;
-            elements.lenderFilter.appendChild(option);
-        });
+        // Lenders are now added in the block above
         
-        console.log(`Added ${elements.lenderFilter.options.length} lender options to dropdown`);
-        console.log('First few lender options:', Array.from(elements.lenderFilter.options).slice(0, 5).map(opt => opt.value));
+        // Log lender options using safe helper method
+        console.log(`Added ${elements.getOptions(elements.lenderFilter).length} lender options to dropdown`);
+        console.log('First few lender options:', Array.from(elements.getOptions(elements.lenderFilter)).slice(0, 5).map(opt => opt.value));
         
         // PRODUCT TYPE FILTER
         // Extract all unique product types
@@ -1627,21 +1821,36 @@ function applyFilters() {
     try {
         showLoading(true);
         
-        // Get filter values
-        const dateStart = elements.dateStart.value;
-        const dateEnd = elements.dateEnd.value;
+        // Get filter values - with null checks
+        const dateStart = elements.dateStart ? elements.dateStart.value : null;
+        const dateEnd = elements.dateEnd ? elements.dateEnd.value : null;
+        
+        // Store previous date range for comparison
+        const previousDateStart = state.filters.dateRange[0];
+        const previousDateEnd = state.filters.dateRange[1];
         // Premium range filter removed from UI but maintained in state
         const premiumMin = 0;
         const premiumMax = 500;
         // Get LTV filter value
-        const ltvRange = elements.ltvFilter.value;
+        const ltvRange = elements.ltvFilter ? elements.ltvFilter.value : 'all';
         
-        console.log('Total lender options:', elements.lenderFilter.options.length);
-        console.log('Selected lender options:', elements.lenderFilter.selectedOptions.length);
+        // Add null checks to prevent errors if lenderFilter is not fully initialized
+        const lenderOptions = elements.lenderFilter ? elements.getOptions(elements.lenderFilter) : [];
+        const selectedLenderOptions = elements.lenderFilter ? elements.getSelectedOptions(elements.lenderFilter) : [];
+        console.log('Total lender options:', lenderOptions.length);
+        console.log('Selected lender options:', selectedLenderOptions.length);
         
-        const selectedLenders = Array.from(elements.lenderFilter.selectedOptions).map(option => option.value);
-        const selectedProductTypes = Array.from(elements.productType.selectedOptions).map(option => option.value);
-        const selectedPurchaseTypes = Array.from(elements.purchaseType.selectedOptions).map(option => option.value);
+        // Get selected lenders with null checks
+        const selectedLenders = elements.lenderFilter ? 
+            Array.from(elements.getSelectedOptions(elements.lenderFilter)).map(option => option.value) : [];
+        
+        // Get selected product types with null checks
+        const selectedProductTypes = elements.productType ? 
+            Array.from(elements.getSelectedOptions(elements.productType)).map(option => option.value) : [];
+        
+        // Get selected purchase types with null checks
+        const selectedPurchaseTypes = elements.purchaseType ? 
+            Array.from(elements.getSelectedOptions(elements.purchaseType)).map(option => option.value) : [];
         
         // Log filter values for debugging
         console.log('Applying filters:', {
@@ -1660,12 +1869,12 @@ function applyFilters() {
         state.filters.purchaseTypes = selectedPurchaseTypes;
         state.filters.ltvRange = ltvRange;
         
-        // Log lender filter state for debugging
+        // Log lender filter state for debugging using safe helper methods
         console.log('Lender filter state after processing:', {
             originalSelection: selectedLenders,
             filteredSelection: state.filters.lenders,
-            lenderCount: elements.lenderFilter.options.length,
-            selectedCount: elements.lenderFilter.selectedOptions.length
+            lenderCount: elements.getOptions(elements.lenderFilter).length,
+            selectedCount: elements.getSelectedOptions(elements.lenderFilter).length
         });
 
         // New log to inspect state.esisData before calling filterData
@@ -1701,7 +1910,8 @@ function applyFilters() {
         
         // Apply product term filter separately
         const beforeProductTermFilter = state.filteredData.length;
-        const selectedProductTerm = document.getElementById('product-term-filter').value;
+        const productTermFilter = document.getElementById('product-term-filter');
+        const selectedProductTerm = productTermFilter ? productTermFilter.value : 'all';
         
         // Log detailed information before applying product term filter
         console.log('=== PRODUCT TERM FILTER - BEFORE APPLYING ===');
@@ -1777,6 +1987,15 @@ function applyFilters() {
         if (state.processedData && state.processedData.premiumBands) {
             populatePremiumBandSelect(state.processedData.premiumBands);
             elements.marketShareSection.classList.remove('hidden');
+            
+            // Show heatmap section
+            elements.heatmapSection.classList.remove('hidden');
+            
+            // Update heatmap without resetting
+            updateHeatmapWithCurrentFilters();
+            
+            // Make sure event listeners are attached to the radio buttons
+            attachHeatmapModeListeners();
             
             // Update market share table if it exists instead of resetting it
             if (state.marketShareFilters.selectedPremiumBands && 
@@ -1946,6 +2165,10 @@ function resetFilters() {
             elements.dateEnd.value = state.processedData.months[state.processedData.months.length - 1];
         }
         
+        // Store previous date range for comparison
+        const previousDateStart = state.filters.dateRange[0];
+        const previousDateEnd = state.filters.dateRange[1];
+        
         // Deselect all options in multi-select dropdowns
         Array.from(elements.lenderFilter.options).forEach(option => option.selected = false);
         Array.from(elements.productType.options).forEach(option => option.selected = false);
@@ -1981,6 +2204,16 @@ function resetFilters() {
         }
         resetMarketShareTable();
         
+        // Reset market share trends if date range changed
+        if (previousDateStart !== state.filters.dateRange[0] || previousDateEnd !== state.filters.dateRange[1]) {
+            resetMarketShareTrends();
+        }
+        
+        // Show the market share trends section if it was hidden
+        if (elements.marketShareTrendsSection) {
+            elements.marketShareTrendsSection.classList.remove('hidden');
+        }
+        
         console.log('Filters reset successfully');
         showLoading(false);
     } catch (error) {
@@ -1990,26 +2223,109 @@ function resetFilters() {
     }
 }
 
-// --- MARKET SHARE: Populate premium band multi-select ---
+// --- MARKET SHARE: Populate premium band chips ---
 function populatePremiumBandSelect(bands) {
-    elements.premiumBandSelect.innerHTML = '';
+    const container = document.getElementById('premium-bands-container');
+    const counter = document.getElementById('premium-bands-counter');
+    container.innerHTML = '';
+    
+    // Keep track of selected bands
+    state.selectedPremiumBands = state.selectedPremiumBands || [];
+    
     bands.forEach(band => {
-        const option = document.createElement('option');
-        option.value = band;
-        option.textContent = band;
-        elements.premiumBandSelect.appendChild(option);
+        const chip = document.createElement('div');
+        chip.className = 'premium-band-chip';
+        chip.dataset.value = band;
+        
+        // Check if this band is already selected
+        if (state.selectedPremiumBands.includes(band)) {
+            chip.classList.add('selected');
+        }
+        
+        // Create checkmark span
+        const checkmark = document.createElement('span');
+        checkmark.className = 'checkmark';
+        checkmark.innerHTML = '✓';
+        chip.appendChild(checkmark);
+        
+        // Add the band text
+        const text = document.createTextNode(band);
+        chip.appendChild(text);
+        
+        // Add click event listener
+        chip.addEventListener('click', function() {
+            this.classList.toggle('selected');
+            const value = this.dataset.value;
+            
+            if (this.classList.contains('selected')) {
+                // Add to selected bands if not already there
+                if (!state.selectedPremiumBands.includes(value)) {
+                    state.selectedPremiumBands.push(value);
+                }
+            } else {
+                // Remove from selected bands
+                state.selectedPremiumBands = state.selectedPremiumBands.filter(b => b !== value);
+            }
+            
+            // Update counter
+            counter.textContent = `${state.selectedPremiumBands.length} selected`;
+        });
+        
+        container.appendChild(chip);
     });
+    
+    // Update counter
+    counter.textContent = `${state.selectedPremiumBands.length} selected`;
 }
 
 // --- MARKET SHARE: Reset market share table and filters ---
 function resetMarketShareTable() {
+    // Reset selected premium bands in state
     state.marketShareFilters.selectedPremiumBands = [];
+    state.selectedPremiumBands = [];
+    
+    // Reset the market share table if it exists
     if (state.marketShareTable) {
         state.marketShareTable.destroy();
         state.marketShareTable = null;
     }
-    elements.premiumBandSelect.selectedIndex = -1;
+    
+    // Clear the market share table container
     elements.marketShareTable.innerHTML = '';
+    
+    // Reset the checkbox chips (remove selected class from all chips)
+    const chips = document.querySelectorAll('.premium-band-chip');
+    chips.forEach(chip => {
+        chip.classList.remove('selected');
+    });
+    
+    // Reset the counter
+    const counter = document.getElementById('premium-bands-counter');
+    if (counter) {
+        counter.textContent = '0 selected';
+    }
+}
+
+// Reset market share trends chart and selection
+function resetMarketShareTrends() {
+    // Reset premium band buttons selection
+    const premiumBandButtons = document.querySelectorAll('.premium-band-btn');
+    premiumBandButtons.forEach(button => {
+        button.classList.remove('selected');
+    });
+    
+    // Reset selection count
+    if (elements.bandsSelectedCount) {
+        elements.bandsSelectedCount.textContent = '0';
+    }
+    
+    // Reset chart to empty state
+    if (elements.marketShareTrendsChart) {
+        elements.marketShareTrendsChart.innerHTML = 
+            '<div class="no-data-message">Please select premium bands and click Apply to view trends.</div>';
+    }
+    
+    console.log('Market share trends reset due to filter changes');
 }
 
 // --- MARKET SHARE: Aggregate data by lender and premium band ---
@@ -2299,8 +2615,8 @@ function aggregateLenderMarketShare(selectedBands) {
 }
 
 function applyMarketShareAnalysis() {
-    // Get selected bands
-    const selectedBands = Array.from(elements.premiumBandSelect.selectedOptions).map(opt => opt.value);
+    // Get selected bands from state (now maintained by the chip click handlers)
+    const selectedBands = state.selectedPremiumBands || [];
     
     // DIAGNOSTIC: Check if 500-520 band is selected
     console.log('DIAGNOSTIC - Selected premium bands for market share analysis:', selectedBands);
@@ -2617,6 +2933,1374 @@ function exportMarketShareData() {
     }
 }
 
+// --- HEATMAP: Data Processing Function ---
+function prepareHeatmapData(filteredData) {
+    // Get unique lenders and premium bands
+    const lenders = [...new Set(filteredData.map(r => r.BaseLender || r.Provider))].sort();
+    
+    // Custom sort function for premium bands to ensure correct numerical order
+    const premiumBands = [...new Set(filteredData.map(r => r.PremiumBand))].sort((a, b) => {
+        // Extract the starting number from each band (e.g., "0-20" -> 0, "20-40" -> 20)
+        const aStart = parseInt(a.split('-')[0]);
+        const bStart = parseInt(b.split('-')[0]);
+        return aStart - bStart;
+    });
+    
+    // Initialize data structure
+    const heatmapData = {
+        lenders: lenders,
+        premiumBands: premiumBands,
+        lenderMode: {}, // Lender-centric view
+        premiumMode: {}  // Premium-centric view
+    };
+    
+    // Create empty data structure
+    lenders.forEach(lender => {
+        heatmapData.lenderMode[lender] = {};
+        premiumBands.forEach(band => {
+            heatmapData.lenderMode[lender][band] = 0;
+        });
+    });
+    
+    premiumBands.forEach(band => {
+        heatmapData.premiumMode[band] = {};
+        lenders.forEach(lender => {
+            heatmapData.premiumMode[band][lender] = 0;
+        });
+    });
+    
+    // Aggregate the data
+    filteredData.forEach(record => {
+        const lender = record.BaseLender || record.Provider;
+        const band = record.PremiumBand;
+        const loanAmount = record.Loan || 0;
+        
+        if (lender && band && lenders.includes(lender) && premiumBands.includes(band)) {
+            heatmapData.lenderMode[lender][band] += loanAmount;
+            heatmapData.premiumMode[band][lender] += loanAmount;
+        }
+    });
+    
+    // Calculate lender totals for normalization
+    const lenderTotals = {};
+    lenders.forEach(lender => {
+        lenderTotals[lender] = Object.values(heatmapData.lenderMode[lender]).reduce((a, b) => a + b, 0);
+    });
+    
+    // Calculate premium band totals for normalization
+    const bandTotals = {};
+    premiumBands.forEach(band => {
+        bandTotals[band] = Object.values(heatmapData.premiumMode[band]).reduce((a, b) => a + b, 0);
+    });
+    
+    // Calculate percentages for lender mode
+    lenders.forEach(lender => {
+        if (lenderTotals[lender] > 0) {
+            premiumBands.forEach(band => {
+                heatmapData.lenderMode[lender][band + '_pct'] = 
+                    (heatmapData.lenderMode[lender][band] / lenderTotals[lender]) * 100;
+            });
+        }
+    });
+    
+    // Calculate percentages for premium mode
+    premiumBands.forEach(band => {
+        if (bandTotals[band] > 0) {
+            lenders.forEach(lender => {
+                heatmapData.premiumMode[band][lender + '_pct'] = 
+                    (heatmapData.premiumMode[band][lender] / bandTotals[band]) * 100;
+            });
+        }
+    });
+    
+    // Store raw totals for reference
+    heatmapData.lenderTotals = lenderTotals;
+    heatmapData.bandTotals = bandTotals;
+    
+    return heatmapData;
+}
+
+// --- HEATMAP: Rendering Function ---
+function renderHeatmap(heatmapData, mode = 'lender', sortBy = null, sortDirection = 'desc') {
+    console.time('renderHeatmap');
+    const container = document.getElementById('heatmap-visualization');
+    container.innerHTML = '';
+    
+    // Create table element
+    const table = document.createElement('table');
+    table.className = 'heatmap-table';
+    table.setAttribute('role', 'grid');
+    table.setAttribute('aria-label', mode === 'lender' ? 'Distribution of Each Lender\'s Volume' : 'Market Share Within Premium Bands');
+    
+    // Create caption for screen readers
+    const caption = document.createElement('caption');
+    caption.textContent = mode === 'lender' 
+        ? 'Heatmap showing distribution of each lender\'s volume across premium bands' 
+        : 'Heatmap showing market share within premium bands across lenders';
+    table.appendChild(caption);
+    
+    // Create header row
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    
+    // Add empty cell for top-left corner
+    const cornerCell = document.createElement('th');
+    cornerCell.setAttribute('scope', 'col');
+    cornerCell.setAttribute('aria-label', 'Lenders / Premium Bands');
+    headerRow.appendChild(cornerCell);
+    
+    // Add premium band headers with sorting functionality
+    heatmapData.premiumBands.forEach(band => {
+        const th = document.createElement('th');
+        th.textContent = band;
+        th.setAttribute('scope', 'col');
+        th.classList.add('sortable');
+        
+        // Add sort indicator if this column is being sorted
+        if (sortBy === band) {
+            th.classList.add('sorted', sortDirection === 'asc' ? 'asc' : 'desc');
+            th.setAttribute('aria-sort', sortDirection === 'asc' ? 'ascending' : 'descending');
+        } else {
+            th.setAttribute('aria-sort', 'none');
+        }
+        
+        // Add click event for sorting
+        th.addEventListener('click', () => {
+            // Determine sort direction - if already sorting by this column, toggle direction
+            let newDirection = 'desc';
+            if (sortBy === band && sortDirection === 'desc') {
+                newDirection = 'asc';
+            }
+            // Re-render with new sort parameters
+            renderHeatmap(heatmapData, mode, band, newDirection);
+        });
+        
+        headerRow.appendChild(th);
+    });
+    
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    
+    // Create table body
+    const tbody = document.createElement('tbody');
+    
+    // Create document fragment for better performance
+    const fragment = document.createDocumentFragment();
+    
+    // Sort lenders if a sort column is specified
+    let sortedLenders = [...heatmapData.lenders]; // Create a copy to avoid modifying the original
+    
+    if (sortBy) {
+        sortedLenders.sort((a, b) => {
+            let aValue, bValue;
+            
+            if (mode === 'lender') {
+                // Use percentage values for sorting
+                aValue = heatmapData.lenderMode[a][sortBy + '_pct'] || 0;
+                bValue = heatmapData.lenderMode[b][sortBy + '_pct'] || 0;
+            } else {
+                aValue = heatmapData.premiumMode[sortBy][a + '_pct'] || 0;
+                bValue = heatmapData.premiumMode[sortBy][b + '_pct'] || 0;
+            }
+            
+            // Sort based on direction
+            return sortDirection === 'asc' ? aValue - bValue : bValue - aValue;
+        });
+    }
+    
+    // Add rows for each lender (now potentially sorted)
+    sortedLenders.forEach(lender => {
+        const row = document.createElement('tr');
+        
+        // Add lender name cell
+        const lenderCell = document.createElement('th');
+        lenderCell.textContent = lender;
+        lenderCell.setAttribute('scope', 'row');
+        row.appendChild(lenderCell);
+        
+        // Add data cells
+        heatmapData.premiumBands.forEach(band => {
+            const cell = document.createElement('td');
+            
+            // Calculate cell value and color based on mode
+            let value, percentage, intensity;
+            
+            if (mode === 'lender') {
+                value = heatmapData.lenderMode[lender][band] || 0;
+                percentage = heatmapData.lenderMode[lender][band + '_pct'] || 0;
+                // Max intensity will be within each lender's row
+                intensity = Math.min(percentage / 25 * 100, 100);
+            } else {
+                value = heatmapData.premiumMode[band][lender] || 0;
+                percentage = heatmapData.premiumMode[band][lender + '_pct'] || 0;
+                // Max intensity will be within each premium band column
+                intensity = Math.min(percentage / 25 * 100, 100);
+            }
+            
+            // Apply color based on intensity (red gradient)
+            cell.style.backgroundColor = `rgba(255, 100, 40, ${intensity/100})`;
+            
+            // Set text content for accessibility (hidden visually but available to screen readers)
+            cell.textContent = `${percentage.toFixed(1)}%`;
+            
+            // Add data attributes for tooltips
+            cell.setAttribute('data-value', formatCurrency(value));
+            cell.setAttribute('data-percentage', percentage.toFixed(1) + '%');
+            cell.setAttribute('aria-label', `${lender} in ${band} band: ${formatCurrency(value)} (${percentage.toFixed(1)}%)`);
+            
+            // Add tooltip event listeners
+            cell.addEventListener('mouseover', showTooltip);
+            cell.addEventListener('mouseout', hideTooltip);
+            
+            row.appendChild(cell);
+        });
+        
+        fragment.appendChild(row);
+    });
+    
+    tbody.appendChild(fragment);
+    table.appendChild(tbody);
+    
+    // Add a legend for the heatmap and sorting instructions
+    const legend = document.createElement('div');
+    legend.className = 'heatmap-legend';
+    legend.innerHTML = `
+        <p class="legend-title">${mode === 'lender' ? 'Lender Distribution' : 'Market Share'} Legend:</p>
+        <div class="legend-items">
+            <div class="legend-item">
+                <span class="legend-color" style="background-color: rgba(255, 100, 40, 0.1);"></span>
+                <span class="legend-label">Low</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background-color: rgba(255, 100, 40, 0.5);"></span>
+                <span class="legend-label">Medium</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background-color: rgba(255, 100, 40, 1);"></span>
+                <span class="legend-label">High</span>
+            </div>
+        </div>
+        <p class="sort-instructions">Click on any premium band header to sort lenders by that column.</p>
+        </div>
+    `;
+    
+    // Create a container for the table and legend
+    const heatmapContainer = document.createElement('div');
+    heatmapContainer.className = 'heatmap-visualization-container';
+    heatmapContainer.appendChild(table);
+    heatmapContainer.appendChild(legend);
+    
+    container.appendChild(heatmapContainer);
+    console.timeEnd('renderHeatmap');
+}
+
+// Helper tooltip functions for heatmap
+function showTooltip(event) {
+    const value = event.target.getAttribute('data-value');
+    const percentage = event.target.getAttribute('data-percentage');
+    
+    const tooltip = document.createElement('div');
+    tooltip.className = 'heatmap-tooltip';
+    tooltip.innerHTML = `Volume: ${value}<br>Percentage: ${percentage}`;
+    
+    tooltip.style.position = 'absolute';
+    tooltip.style.left = (event.pageX + 10) + 'px';
+    tooltip.style.top = (event.pageY + 10) + 'px';
+    
+    document.body.appendChild(tooltip);
+    event.target.setAttribute('data-tooltip-active', 'true');
+}
+
+function hideTooltip(event) {
+    const tooltips = document.querySelectorAll('.heatmap-tooltip');
+    tooltips.forEach(t => t.remove());
+    event.target.removeAttribute('data-tooltip-active');
+}
+
+// Helper function to format currency values
+function formatCurrency(value) {
+    // Format as millions with 2 decimal places
+    const valueInMillions = (value / 1000000).toFixed(2);
+    return `£${Number(valueInMillions).toLocaleString()}m`;
+}
+
+// --- HEATMAP: Helper function to get data without lender filter ---
+function getHeatmapData() {
+    // If no lender filter is applied, just use the current filtered data
+    if (!state.filters.lenders || state.filters.lenders.length === 0) {
+        return state.filteredData || [];
+    }
+    
+    // Otherwise, we need to re-filter the original data with all filters except lender
+    console.log('Removing lender filter for heatmap visualization');
+    return state.esisData.filter(record => {
+        try {
+            // Skip invalid records
+            if (!record || typeof record !== 'object') {
+                return false;
+            }
+            
+            // Filter by date range
+            if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
+                if (!record.DocumentDate || !record.Month) { 
+                    return false;
+                }
+                const recordMonth = record.Month; 
+                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
+                    return false;
+                }
+            }
+            
+            // Filter by product type
+            if (state.filters.productTypes.length > 0) {
+                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
+                    return false;
+                }
+            }
+            
+            // Filter by purchase type
+            if (state.filters.purchaseTypes.length > 0) {
+                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
+                    return false;
+                }
+            }
+            
+            // Filter by LTV range
+            if (state.filters.ltvRange !== 'all') {
+                // Use our standardized LTV field from mapping
+                let ltv = record.StandardizedLTV;
+                
+                // If LTV is available, filter by it
+                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
+                        return false;
+                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                        return false;
+                    }
+                }
+            }
+            
+            // Apply product term filter
+            // Get product term filter with null check
+            const productTermFilter = document.getElementById('product-term-filter');
+            const productTermValue = productTermFilter ? productTermFilter.value : 'all';
+            
+            if (productTermValue !== 'all') {
+                const termFilterResult = getDataByProductTerm([record], productTermValue);
+                if (termFilterResult.length === 0) {
+                    return false;
+                }
+            }
+            
+            // Ignore lender filter - include all lenders
+            return true;
+        } catch (error) {
+            console.error('Error in getHeatmapData:', error, record);
+            return false;
+        }
+    });
+}
+
+// --- HEATMAP: Update Function ---
+function updateHeatmap() {
+    try {
+        console.log('Updating heatmap visualization...');
+        
+        // Ensure the heatmap visualization element exists
+        const heatmapVisualization = document.getElementById('heatmap-visualization');
+        if (!heatmapVisualization) {
+            console.warn('Heatmap visualization element not found, attempting to recreate it');
+            ensureHeatmapElementsExist();
+            // Try to get the element again after creating it
+            const newHeatmapVisualization = document.getElementById('heatmap-visualization');
+            if (!newHeatmapVisualization) {
+                console.error('Failed to create heatmap visualization element');
+                return;
+            }
+            newHeatmapVisualization.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Generating heatmap...</p></div>';
+        } else {
+            heatmapVisualization.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Generating heatmap...</p></div>';
+        }
+        
+        // Get filtered data without lender filter
+        const filteredData = getHeatmapData();
+        
+        // Get the heatmap visualization element again as it might have been recreated
+        let vizElement = document.getElementById('heatmap-visualization');
+        if (!vizElement) {
+            console.error('Heatmap visualization element not found after attempting to recreate it');
+            return;
+        }
+        
+        if (filteredData.length === 0) {
+            console.warn('No data available for heatmap visualization');
+            vizElement.innerHTML = '<p class="no-data">No data available for the selected filters.</p>';
+            return;
+        }
+        
+        // Check if we have enough unique lenders and premium bands for a meaningful heatmap
+        const uniqueLenders = new Set(filteredData.map(r => r.BaseLender || r.Provider));
+        const uniquePremiumBands = new Set(filteredData.map(r => r.PremiumBand));
+        
+        if (uniqueLenders.size <= 1 || uniquePremiumBands.size <= 1) {
+            console.warn('Not enough unique lenders or premium bands for a meaningful heatmap');
+            vizElement.innerHTML = 
+                '<p class="warning">Not enough data variation for a meaningful heatmap. ' + 
+                'Please adjust filters to include multiple lenders and premium bands.</p>';
+            return;
+        }
+        
+        // Use setTimeout to allow the loading indicator to render before processing data
+        setTimeout(() => {
+            // Prepare data for the heatmap
+            const heatmapData = prepareHeatmapData(filteredData);
+            
+            // Get current visualization mode with fallback
+            const modeElement = document.querySelector('input[name="heatmap-mode"]:checked');
+            const mode = modeElement ? modeElement.value : 'lender'; // Default to lender mode if not found
+            console.log('Current heatmap mode:', mode);
+            
+            // Render the heatmap
+            renderHeatmap(heatmapData, mode);
+            
+            // Re-attach event listeners to radio buttons
+            attachHeatmapModeListeners();
+            
+            console.log('Heatmap updated successfully');
+        }, 10);
+    } catch (error) {
+        console.error('Error updating heatmap:', error);
+        const vizElement = document.getElementById('heatmap-visualization');
+        if (vizElement) {
+            vizElement.innerHTML = '<p class="error">Error generating heatmap visualization: ' + error.message + '</p>';
+        }
+    }
+}
+
+// Function to update the heatmap without resetting it, using current filters
+function updateHeatmapWithCurrentFilters() {
+    try {
+        console.log('Updating heatmap with current filters...');
+        
+        // Ensure the heatmap visualization element exists
+        const vizElement = document.getElementById('heatmap-visualization');
+        if (!vizElement) {
+            console.warn('Heatmap visualization element not found, attempting to recreate it');
+            ensureHeatmapElementsExist();
+            // Try to get the element again after creating it
+            const newVizElement = document.getElementById('heatmap-visualization');
+            if (!newVizElement) {
+                console.error('Failed to create heatmap visualization element');
+                return;
+            }
+            newVizElement.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Generating heatmap...</p></div>';
+        } else {
+            // Show loading indicator but preserve the current state
+            const currentState = vizElement.innerHTML;
+            vizElement.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Updating heatmap...</p></div>';
+            
+            // Store the current state to restore if there's an error
+            vizElement.dataset.previousState = currentState;
+        }
+        
+        // Get filtered data without lender filter
+        const filteredData = getHeatmapData();
+        
+        // Get the heatmap visualization element again as it might have been recreated
+        let finalVizElement = document.getElementById('heatmap-visualization');
+        if (!finalVizElement) {
+            console.error('Heatmap visualization element not found after attempting to recreate it');
+            return;
+        }
+        
+        if (filteredData.length === 0) {
+            console.warn('No data available for heatmap visualization');
+            finalVizElement.innerHTML = '<p class="no-data">No data available for the selected filters.</p>';
+            return;
+        }
+        
+        // Check if we have enough unique lenders and premium bands for a meaningful heatmap
+        const uniqueLenders = new Set(filteredData.map(r => r.BaseLender || r.Provider));
+        const uniquePremiumBands = new Set(filteredData.map(r => r.PremiumBand));
+        
+        if (uniqueLenders.size <= 1 || uniquePremiumBands.size <= 1) {
+            console.warn('Not enough unique lenders or premium bands for a meaningful heatmap');
+            finalVizElement.innerHTML = 
+                '<p class="warning">Not enough data variation for a meaningful heatmap. ' + 
+                'Please adjust filters to include multiple lenders and premium bands.</p>';
+            return;
+        }
+        
+        // Use setTimeout to allow the loading indicator to render before processing data
+        setTimeout(() => {
+            try {
+                // Prepare data for the heatmap
+                const heatmapData = prepareHeatmapData(filteredData);
+                
+                // Get current visualization mode with fallback
+                const modeElement = document.querySelector('input[name="heatmap-mode"]:checked');
+                const mode = modeElement ? modeElement.value : 'lender'; // Default to lender mode if not found
+                console.log('Current heatmap mode:', mode);
+                
+                // Get current sort parameters if they exist
+                let sortBy = null;
+                let sortDirection = 'desc';
+                
+                // Check if we have any sorted columns
+                const sortedHeader = document.querySelector('.heatmap-table th.sorted');
+                if (sortedHeader) {
+                    sortBy = sortedHeader.textContent;
+                    sortDirection = sortedHeader.classList.contains('asc') ? 'asc' : 'desc';
+                    console.log(`Preserving sort: ${sortBy} (${sortDirection})`);
+                }
+                
+                // Render the heatmap with preserved sort parameters
+                renderHeatmap(heatmapData, mode, sortBy, sortDirection);
+                
+                // Re-attach event listeners to radio buttons
+                attachHeatmapModeListeners();
+                
+                console.log('Heatmap updated successfully with current filters');
+            } catch (innerError) {
+                console.error('Error in heatmap update timeout:', innerError);
+                // Try to restore previous state if available
+                const vizElement = document.getElementById('heatmap-visualization');
+                if (vizElement && vizElement.dataset.previousState) {
+                    vizElement.innerHTML = vizElement.dataset.previousState;
+                    console.log('Restored previous heatmap state after error');
+                } else if (vizElement) {
+                    vizElement.innerHTML = '<p class="error">Error updating heatmap: ' + innerError.message + '</p>';
+                }
+            }
+        }, 10);
+    } catch (error) {
+        console.error('Error updating heatmap with current filters:', error);
+        const vizElement = document.getElementById('heatmap-visualization');
+        if (vizElement) {
+            // Try to restore previous state if available
+            if (vizElement.dataset.previousState) {
+                vizElement.innerHTML = vizElement.dataset.previousState;
+                console.log('Restored previous heatmap state after error');
+            } else {
+                vizElement.innerHTML = '<p class="error">Error updating heatmap: ' + error.message + '</p>';
+            }
+        }
+    }
+}
+
+// Function to attach event listeners to heatmap mode radio buttons
+function attachHeatmapModeListeners() {
+    const radioButtons = document.querySelectorAll('input[name="heatmap-mode"]');
+    console.log('Attaching listeners to', radioButtons.length, 'radio buttons');
+    
+    radioButtons.forEach(radio => {
+        // Remove any existing listeners to prevent duplicates
+        radio.removeEventListener('change', updateHeatmapOnModeChange);
+        // Add the new listener
+        radio.addEventListener('change', updateHeatmapOnModeChange);
+    });
+}
+
+// Separate function to handle mode changes to avoid closure issues
+function updateHeatmapOnModeChange(event) {
+    console.log('Heatmap mode changed to:', event.target.value);
+    // Use the new function that preserves state
+    updateHeatmapWithCurrentFilters();
+}
+
+// Chart.js Configuration and Functions
+function initChartJsConfig() {
+    // Verify Chart.js is loaded
+    if (typeof Chart === 'undefined') {
+        console.error('Chart.js library not loaded. Please check your script imports.');
+        // Try to load Chart.js dynamically if it's not available
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+        script.onload = function() {
+            console.log('Chart.js library loaded dynamically');
+            configureChartJs();
+        };
+        script.onerror = function() {
+            console.error('Failed to load Chart.js dynamically');
+        };
+        document.head.appendChild(script);
+        return;
+    }
+    
+    console.log('Chart.js library loaded successfully');
+    configureChartJs();
+}
+
+// Configure Chart.js defaults
+function configureChartJs() {
+    if (typeof Chart === 'undefined') {
+        console.error('Cannot configure Chart.js - library not loaded');
+        return;
+    }
+    
+    // Set default Chart.js configuration
+    Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+    Chart.defaults.color = '#666';
+    Chart.defaults.responsive = true;
+    
+    // Make sure we have the chart container
+    if (!elements.marketShareTrendsChart) {
+        elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
+    }
+    
+    // Show initial empty state for market share trends chart
+    if (elements.marketShareTrendsChart) {
+        elements.marketShareTrendsChart.innerHTML = 
+            '<div class="no-data-message">Please select premium bands and click Apply to view trends.</div>';
+    }
+}
+
+// Create a line chart configuration template function
+function createLineChartConfig(labels, datasets) {
+    return {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right',
+                    align: 'start',
+                    labels: {
+                        boxWidth: 12,
+                        padding: 15
+                    }
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== null) {
+                                label += context.parsed.y.toFixed(1) + '%';
+                            }
+                            return label;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Market Share (%)',
+                        font: {
+                            weight: 'bold'
+                        }
+                    },
+                    ticks: {
+                        callback: function(value) {
+                            return value + '%';
+                        }
+                    }
+                },
+                x: {
+                    title: {
+                        display: false
+                    }
+                }
+            }
+        }
+    };
+}
+
+// Function to generate a random color for chart datasets
+function getRandomColor() {
+    const letters = '0123456789ABCDEF';
+    let color = '#';
+    for (let i = 0; i < 6; i++) {
+        color += letters[Math.floor(Math.random() * 16)];
+    }
+    return color;
+}
+
+// Market Share Trends Functions
+
+// Initialize the premium band selector for market share trends
+function initializePremiumBandSelector() {
+    // Re-get the element references to ensure they're up to date
+    elements.trendsPremiumBandsGrid = document.getElementById('trends-premium-bands-grid');
+    elements.bandsSelectedCount = document.getElementById('bands-selected-count');
+    elements.trendsApplyBtn = document.getElementById('trends-apply-btn');
+    elements.trendsExportBtn = document.getElementById('trends-export-btn');
+    elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
+    elements.marketShareTrendsSection = document.getElementById('market-share-trends-section');
+    
+    // If the trends premium bands grid doesn't exist yet, exit
+    if (!elements.trendsPremiumBandsGrid) {
+        console.warn('Premium bands grid element not found');
+        return;
+    }
+    
+    // Add event listeners for the Apply and Export buttons
+    if (elements.trendsApplyBtn) {
+        elements.trendsApplyBtn.addEventListener('click', updateMarketShareTrendsChart);
+    }
+    
+    if (elements.trendsExportBtn) {
+        elements.trendsExportBtn.addEventListener('click', exportTrendsData);
+    }
+    
+    // If we don't have data yet, we'll populate the bands when data is processed
+    if (!state.esisData || !state.esisData.length) {
+        console.log('No data available yet for premium band selector');
+        return;
+    }
+    
+    populatePremiumBands();
+}
+
+// Update the premium band selector when data changes
+function updatePremiumBandSelector() {
+    // Make sure we have the element references
+    if (!elements.trendsPremiumBandsGrid) {
+        elements.trendsPremiumBandsGrid = document.getElementById('trends-premium-bands-grid');
+    }
+    
+    if (!elements.bandsSelectedCount) {
+        elements.bandsSelectedCount = document.getElementById('bands-selected-count');
+    }
+    
+    if (!elements.marketShareTrendsSection) {
+        elements.marketShareTrendsSection = document.getElementById('market-share-trends-section');
+    }
+    
+    if (!elements.marketShareTrendsChart) {
+        elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
+    }
+    
+    // If we still don't have the elements, exit
+    if (!elements.trendsPremiumBandsGrid) {
+        console.warn('Premium bands grid element not found during update');
+        return;
+    }
+    
+    // If we have data, populate the premium bands
+    if (state.esisData && state.esisData.length > 0) {
+        populatePremiumBands();
+    }
+    
+    // Show the market share trends section
+    if (elements.marketShareTrendsSection) {
+        elements.marketShareTrendsSection.classList.remove('hidden');
+    }
+}
+
+// Populate premium bands from the data
+function populatePremiumBands() {
+    console.log('Populating premium bands...');
+    
+    // Double-check that we have the element references
+    if (!elements.trendsPremiumBandsGrid) {
+        elements.trendsPremiumBandsGrid = document.getElementById('trends-premium-bands-grid');
+        console.log('Re-fetched trends premium bands grid element:', elements.trendsPremiumBandsGrid ? 'found' : 'not found');
+    }
+    
+    if (!elements.bandsSelectedCount) {
+        elements.bandsSelectedCount = document.getElementById('bands-selected-count');
+    }
+    
+    // Exit if we still don't have the elements or data
+    if (!elements.trendsPremiumBandsGrid || !state.esisData) {
+        console.warn('Cannot populate premium bands: missing grid element or data');
+        return;
+    }
+    
+    // Get all unique premium bands from the data
+    const premiumBands = [...new Set(state.esisData.map(r => r.PremiumBand))].sort((a, b) => {
+        // Sort numerically by the first number in each band
+        const aNum = parseInt(a.split('-')[0]);
+        const bNum = parseInt(b.split('-')[0]);
+        return aNum - bNum;
+    });
+    
+    console.log(`Found ${premiumBands.length} unique premium bands`);
+    
+    // Clear the container
+    elements.trendsPremiumBandsGrid.innerHTML = '';
+    
+    // Create buttons for each premium band
+    premiumBands.forEach(band => {
+        const button = document.createElement('button');
+        button.className = 'premium-band-btn';
+        button.setAttribute('data-band', band);
+        button.textContent = band;
+        
+        // Add click event listener to toggle selection
+        button.addEventListener('click', function() {
+            this.classList.toggle('selected');
+            updateSelectedBandsCount();
+        });
+        
+        elements.trendsPremiumBandsGrid.appendChild(button);
+    });
+    
+    // Initialize the selected count
+    updateSelectedBandsCount();
+    
+    // Show the market share trends section
+    if (elements.marketShareTrendsSection) {
+        elements.marketShareTrendsSection.classList.remove('hidden');
+    }
+    
+    console.log('Premium bands populated successfully');
+}
+
+// Update the count of selected premium bands
+function updateSelectedBandsCount() {
+    if (!elements.bandsSelectedCount) return;
+    
+    const selectedCount = document.querySelectorAll('.premium-band-btn.selected').length;
+    elements.bandsSelectedCount.textContent = selectedCount;
+}
+
+// Reset the market share trends section when filters change
+function resetMarketShareTrends() {
+    // Make sure we have the element references
+    if (!elements.marketShareTrendsChart) {
+        elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
+    }
+    
+    if (elements.marketShareTrendsChart) {
+        elements.marketShareTrendsChart.innerHTML = 
+            '<div class="no-data-message">Please select premium bands and click Apply to view trends.</div>';
+    }
+    
+    // Re-initialize the premium band selector
+    updatePremiumBandSelector();
+}
+
+// Update the market share trends chart based on selected premium bands
+function updateMarketShareTrendsChart() {
+    try {
+        console.log('Updating market share trends chart...');
+        
+        // Make sure we have the element references
+        if (!elements.marketShareTrendsChart) {
+            elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
+            console.log('Re-fetched market share trends chart element:', elements.marketShareTrendsChart ? 'found' : 'not found');
+        }
+        
+        // Validate state.esisData exists
+        if (!state.esisData || !Array.isArray(state.esisData) || state.esisData.length === 0) {
+            console.warn('No ESIS data available for market share trends chart');
+            if (elements.marketShareTrendsChart) {
+                elements.marketShareTrendsChart.innerHTML = 
+                    '<div class="no-data-message">No data available. Please upload and analyze data files first.</div>';
+            }
+            return;
+        }
+        
+        // Get selected premium bands
+        const premiumBandButtons = document.querySelectorAll('.premium-band-btn.selected');
+        console.log(`Found ${premiumBandButtons.length} selected premium band buttons`);
+        
+        const selectedBands = Array.from(premiumBandButtons).map(btn => btn.getAttribute('data-band'));
+        console.log('Selected premium bands:', selectedBands);
+        
+        // If no bands are selected, show a message and return
+        if (selectedBands.length === 0) {
+            console.warn('No premium bands selected for market share trends chart');
+            if (elements.marketShareTrendsChart) {
+                elements.marketShareTrendsChart.innerHTML = 
+                    '<div class="no-data-message">Please select at least one premium band to view trends.</div>';
+            }
+            return;
+        }
+        
+        // Show loading indicator
+        if (elements.marketShareTrendsChart) {
+            elements.marketShareTrendsChart.innerHTML = 
+                '<div class="no-data-message"><div class="spinner"></div>Processing data...</div>';
+        }
+        
+        // Process the data in the next tick to allow UI to update
+        setTimeout(() => {
+            try {
+                // Set default date range if not already set
+                if (!state.filters.dateRange || !state.filters.dateRange[0] || !state.filters.dateRange[1]) {
+                    console.warn('Date range not properly set in filters, using all available data');
+                    
+                    // Instead of throwing an error, let's use all the data
+                    const filteredByDate = state.esisData;
+                    console.log(`Using all ${filteredByDate.length} records for trends chart`);
+                    
+                    // Continue processing with all data
+                    processMarketShareTrendsData(filteredByDate, selectedBands);
+                    return;
+                }
+                
+                console.log('Using date range filter:', state.filters.dateRange);
+                
+                // Get data filtered by the main date range filter (but NOT by lender filter)
+                const filteredByDate = state.esisData.filter(record => {
+                    // Skip records with invalid dates
+                    if (!record.Month) return false;
+                    
+                    // Apply only date range filter, not lender filter
+                    return record.Month >= state.filters.dateRange[0] && record.Month <= state.filters.dateRange[1];
+                });
+                
+                if (filteredByDate.length === 0) {
+                    throw new Error('No data matches the selected date range. Please adjust your filters.');
+                }
+                
+                // Continue processing with filtered data
+                processMarketShareTrendsData(filteredByDate, selectedBands);
+            } catch (innerError) {
+                console.error('Error in date filtering:', innerError);
+                if (elements.marketShareTrendsChart) {
+                    elements.marketShareTrendsChart.innerHTML = 
+                        `<div class="no-data-message error-message">
+                            <h3>Error Processing Data</h3>
+                            <p>${innerError.message}</p>
+                            <button class="retry-btn" onclick="updateMarketShareTrendsChart()">Retry</button>
+                        </div>`;
+                }
+            }
+        }, 10);
+    } catch (outerError) {
+        console.error('Unexpected error in updateMarketShareTrendsChart:', outerError);
+        if (elements.marketShareTrendsChart) {
+            elements.marketShareTrendsChart.innerHTML = 
+                `<div class="no-data-message error-message">
+                    <h3>Unexpected Error</h3>
+                    <p>${outerError.message}</p>
+                    <button class="retry-btn" onclick="updateMarketShareTrendsChart()">Retry</button>
+                </div>`;
+        }
+    }
+}
+
+// Process data for the market share trends chart
+function processMarketShareTrendsData(filteredData, selectedBands) {
+    try {
+        console.log(`Processing ${filteredData.length} records for trends chart with ${selectedBands.length} selected bands`);
+        
+        // Filter by selected premium bands
+        const filteredByBands = filteredData.filter(record => {
+            return selectedBands.includes(record.PremiumBand);
+        });
+        
+        if (filteredByBands.length === 0) {
+            throw new Error('No data matches the selected premium bands. Please select different bands.');
+        }
+        
+        console.log(`Found ${filteredByBands.length} records matching selected premium bands`);
+        
+        // Group data by month and lender for the chart
+        const monthlyData = groupByMonthAndLender(filteredByBands);
+        
+        // Find lenders who have market share in any month
+        const activeLenders = findActiveLenders(monthlyData);
+        
+        if (activeLenders.length === 0) {
+            throw new Error('No lenders found with market share in the selected data.');
+        }
+        
+        console.log(`Found ${activeLenders.length} active lenders for the trends chart`);
+        
+        // Render the chart
+        renderTrendsChart(monthlyData, activeLenders);
+        
+        console.log('Market share trends chart updated successfully');
+    } catch (error) {
+        console.error('Error updating market share trends chart:', error);
+        if (elements.marketShareTrendsChart) {
+            elements.marketShareTrendsChart.innerHTML = 
+                `<div class="no-data-message error-message">
+                    <h3>Error</h3>
+                    <p>${error.message}</p>
+                    <button class="retry-btn" onclick="updateMarketShareTrendsChart()">Retry</button>
+                </div>`;
+        }
+    }
+}
+
+// Group data by month and lender for the trends chart
+function groupByMonthAndLender(data) {
+    // Initialize result structure
+    const result = {};
+    
+    // Format months as 'MMM YY' (e.g., 'Jan 24')
+    const formatMonth = date => {
+        const d = new Date(date);
+        return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+    };
+    
+    // Track all months for sorting
+    const months = [];
+    const monthLabels = [];
+    
+    // Group data by month and lender
+    data.forEach(record => {
+        const date = new Date(record.DocumentDate);
+        const monthKey = date.getFullYear() + '-' + (date.getMonth() + 1).toString().padStart(2, '0');
+        const monthLabel = formatMonth(date);
+        const lender = record.Provider;
+        
+        // Skip if missing essential data
+        if (!lender) return;
+        
+        // Add month to tracking array if not already present
+        if (!result[monthKey]) {
+            result[monthKey] = {
+                lenders: {},
+                total: 0
+            };
+            
+            months.push({
+                key: monthKey,
+                label: monthLabel,
+                date: date
+            });
+        }
+        
+        // Add loan amount to lender's total for this month
+        const loan = record.Loan || 0;
+        
+        if (!result[monthKey].lenders[lender]) {
+            result[monthKey].lenders[lender] = 0;
+        }
+        
+        result[monthKey].lenders[lender] += loan;
+        result[monthKey].total += loan;
+    });
+    
+    // Sort months chronologically
+    months.sort((a, b) => a.date - b.date);
+    
+    // Calculate market share percentages
+    Object.keys(result).forEach(month => {
+        const monthData = result[month];
+        const totalLoanAmount = monthData.total;
+        
+        if (totalLoanAmount > 0) {
+            Object.keys(monthData.lenders).forEach(lender => {
+                const lenderAmount = monthData.lenders[lender];
+                monthData.lenders[lender + '_pct'] = (lenderAmount / totalLoanAmount) * 100;
+            });
+        }
+    });
+    
+    return {
+        months: months.map(m => m.key),
+        monthLabels: months.map(m => m.label),
+        data: result
+    };
+}
+
+// Find lenders who have market share in any month
+function findActiveLenders(monthlyData) {
+    // Find all lenders who have market share in any month
+    const lenderSet = new Set();
+    
+    Object.values(monthlyData.data).forEach(month => {
+        Object.keys(month.lenders).forEach(lender => {
+            // Only include actual lender names, not percentage keys
+            if (!lender.endsWith('_pct')) {
+                lenderSet.add(lender);
+            }
+        });
+    });
+    
+    return Array.from(lenderSet).sort();
+}
+
+// Render the market share trends chart
+function renderTrendsChart(monthlyData, lenders) {
+    try {
+        console.log('Rendering trends chart...');
+        
+        // Make sure we have the chart container
+        if (!elements.marketShareTrendsChart) {
+            elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
+        }
+        
+        if (!elements.marketShareTrendsChart) {
+            console.error('Market share trends chart container not found');
+            return;
+        }
+        
+        // Validate input data
+        if (!monthlyData || !monthlyData.months || !monthlyData.monthLabels || !monthlyData.data) {
+            console.error('Invalid monthly data structure:', monthlyData);
+            throw new Error('Invalid monthly data structure');
+        }
+        
+        if (!lenders || !Array.isArray(lenders) || lenders.length === 0) {
+            console.error('No lenders available to display');
+            throw new Error('No lenders available to display');
+        }
+        
+        console.log(`Rendering chart with ${monthlyData.months.length} months and ${lenders.length} lenders`);
+        
+        // Create canvas for the chart
+        elements.marketShareTrendsChart.innerHTML = '<canvas id="trends-chart"></canvas>';
+        const canvas = document.getElementById('trends-chart');
+        
+        if (!canvas) {
+            throw new Error('Failed to create chart canvas element');
+        }
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            throw new Error('Failed to get canvas context');
+        }
+        
+        // Prepare datasets for each lender
+        const datasets = [];
+        const colorMap = {};
+        
+        lenders.forEach((lender, index) => {
+            // Generate a color for this lender or use existing one
+            if (!colorMap[lender]) {
+                colorMap[lender] = getRandomColor();
+            }
+            const color = colorMap[lender];
+            
+            // Prepare data points for this lender
+            const data = monthlyData.months.map(month => {
+                const monthData = monthlyData.data[month];
+                if (!monthData || !monthData.lenders) {
+                    console.warn(`Missing data for month: ${month}`);
+                    return 0;
+                }
+                return monthData.lenders[lender + '_pct'] || 0;
+            });
+            
+            // Create dataset
+            datasets.push({
+                label: lender,
+                data: data,
+                borderColor: color,
+                backgroundColor: 'transparent',
+                pointBackgroundColor: color,
+                pointRadius: 4,
+                tension: 0.3 // Makes the line curved
+            });
+        });
+        
+        // Create and render the chart using our template
+        const chartConfig = createLineChartConfig(monthlyData.monthLabels, datasets);
+        
+        try {
+            // Attempt to create the chart
+            new Chart(ctx, chartConfig);
+            console.log('Chart rendered successfully with', lenders.length, 'lenders');
+        } catch (chartError) {
+            console.error('Error creating Chart.js chart:', chartError);
+            
+            // Fallback to tabular representation
+            const fallbackTable = createFallbackTable(monthlyData, lenders);
+            elements.marketShareTrendsChart.innerHTML = '';
+            elements.marketShareTrendsChart.appendChild(fallbackTable);
+            
+            // Show warning about chart rendering failure
+            const warningDiv = document.createElement('div');
+            warningDiv.className = 'chart-warning';
+            warningDiv.textContent = 'Chart rendering failed. Displaying data in tabular format instead.';
+            elements.marketShareTrendsChart.insertBefore(warningDiv, fallbackTable);
+        }
+    } catch (error) {
+        console.error('Error in renderTrendsChart:', error);
+        if (elements.marketShareTrendsChart) {
+            elements.marketShareTrendsChart.innerHTML = 
+                `<div class="no-data-message error-message">
+                    <h3>Chart Rendering Error</h3>
+                    <p>${error.message}</p>
+                    <button class="retry-btn" onclick="updateMarketShareTrendsChart()">Retry</button>
+                </div>`;
+        }
+    }
+}
+
+// Create a fallback table for when chart rendering fails
+function createFallbackTable(monthlyData, lenders) {
+    const table = document.createElement('table');
+    table.className = 'fallback-table';
+    
+    // Create header row
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    
+    // Add Month header
+    const monthHeader = document.createElement('th');
+    monthHeader.textContent = 'Month';
+    headerRow.appendChild(monthHeader);
+    
+    // Add lender headers
+    lenders.forEach(lender => {
+        const th = document.createElement('th');
+        th.textContent = lender;
+        headerRow.appendChild(th);
+    });
+    
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    
+    // Create table body
+    const tbody = document.createElement('tbody');
+    
+    // Add data rows
+    monthlyData.months.forEach((month, index) => {
+        const row = document.createElement('tr');
+        
+        // Add month cell
+        const monthCell = document.createElement('td');
+        monthCell.textContent = monthlyData.monthLabels[index];
+        row.appendChild(monthCell);
+        
+        // Add lender data cells
+        lenders.forEach(lender => {
+            const td = document.createElement('td');
+            const monthData = monthlyData.data[month];
+            const value = monthData && monthData.lenders ? 
+                (monthData.lenders[lender + '_pct'] || 0) : 0;
+            td.textContent = value.toFixed(1) + '%';
+            row.appendChild(td);
+        });
+        
+        tbody.appendChild(row);
+    });
+    
+    table.appendChild(tbody);
+    return table;
+}
+
+// Export trends data as CSV
+function exportTrendsData() {
+    try {
+        // Validate state.esisData exists
+        if (!state.esisData || !Array.isArray(state.esisData) || state.esisData.length === 0) {
+            showError('No data available. Please upload and analyze data files first.');
+            return;
+        }
+        
+        // Get selected premium bands
+        const selectedBands = Array.from(
+            document.querySelectorAll('.premium-band-btn.selected')
+        ).map(btn => btn.getAttribute('data-band'));
+        
+        // If no bands are selected, show an error and return
+        if (selectedBands.length === 0) {
+            showError('Please select at least one premium band to export data.');
+            return;
+        }
+        
+        // Validate date filters
+        if (!state.filters.startDate || !state.filters.endDate) {
+            showError('Invalid date range. Please set a valid date range in the filters.');
+            return;
+        }
+        
+        // Show loading indicator
+        const originalContent = elements.marketShareTrendsChart.innerHTML;
+        elements.marketShareTrendsChart.innerHTML = 
+            '<div class="no-data-message"><div class="spinner"></div>Preparing export data...</div>';
+        
+        setTimeout(() => {
+            try {
+                // Get data filtered by the main date range filter
+                const filteredByDate = state.esisData.filter(record => {
+                    // Skip records with invalid dates
+                    if (!record.DocumentDate) return false;
+                    
+                    const recordDate = new Date(record.DocumentDate);
+                    return recordDate >= state.filters.startDate && recordDate <= state.filters.endDate;
+                });
+                
+                if (filteredByDate.length === 0) {
+                    throw new Error('No data available for the selected date range.');
+                }
+                
+                // Filter to include only selected premium bands
+                const filteredData = filteredByDate.filter(record => 
+                    selectedBands.includes(record.PremiumBand)
+                );
+                
+                if (filteredData.length === 0) {
+                    throw new Error('No data available for the selected premium bands in this date range.');
+                }
+                
+                // Group data by month and lender
+                const monthlyData = groupByMonthAndLender(filteredData);
+                
+                // Find active lenders
+                const lenders = findActiveLenders(monthlyData);
+                
+                if (lenders.length === 0) {
+                    throw new Error('No lenders found with market share in the selected data.');
+                }
+                
+                // Create CSV content
+                let csvContent = 'Month,';
+                
+                // Add header row with lender names
+                lenders.forEach(lender => {
+                    csvContent += `${lender} (%),`;
+                });
+                
+                csvContent = csvContent.slice(0, -1) + '\n';
+                
+                // Add data rows
+                monthlyData.months.forEach((month, index) => {
+                    csvContent += monthlyData.monthLabels[index] + ',';
+                    
+                    lenders.forEach(lender => {
+                        const pctValue = monthlyData.data[month].lenders[lender + '_pct'] || 0;
+                        csvContent += `${pctValue.toFixed(1)},`;
+                    });
+                    
+                    csvContent = csvContent.slice(0, -1) + '\n';
+                });
+                
+                // Create download link
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.setAttribute('href', url);
+                link.setAttribute('download', 'market_share_trends.csv');
+                link.style.visibility = 'hidden';
+                
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // Restore original chart content
+                elements.marketShareTrendsChart.innerHTML = originalContent;
+                
+                // Show success message
+                showSuccessMessage('Data exported successfully!');
+                
+                console.log('Market share trends data exported successfully');
+            } catch (error) {
+                console.error('Error exporting market share trends data:', error);
+                // Restore original chart content
+                elements.marketShareTrendsChart.innerHTML = originalContent;
+                showError('Export failed: ' + error.message);
+            }
+        }, 10);
+    } catch (outerError) {
+        console.error('Unexpected error in exportTrendsData:', outerError);
+        showError('Unexpected error during export: ' + outerError.message);
+    }
+}
+
 // Export Functions
 function exportData() {
     if (!state.table) return;
@@ -2642,6 +4326,53 @@ function showError(message) {
 
 function dismissError() {
     elements.errorContainer.classList.add('hidden');
+}
+
+// Show success message with auto-dismiss after 3 seconds
+function showSuccessMessage(message) {
+    // Create success message container if it doesn't exist
+    let successContainer = document.getElementById('success-container');
+    if (!successContainer) {
+        successContainer = document.createElement('div');
+        successContainer.id = 'success-container';
+        successContainer.className = 'success-message hidden';
+        
+        const successContent = document.createElement('div');
+        successContent.className = 'success-content';
+        
+        const successIcon = document.createElement('span');
+        successIcon.className = 'success-icon';
+        successIcon.innerHTML = '✓';
+        
+        const successText = document.createElement('p');
+        successText.id = 'success-text';
+        
+        const dismissBtn = document.createElement('button');
+        dismissBtn.id = 'dismiss-success';
+        dismissBtn.textContent = 'Dismiss';
+        dismissBtn.addEventListener('click', dismissSuccessMessage);
+        
+        successContent.appendChild(successIcon);
+        successContent.appendChild(successText);
+        successContent.appendChild(dismissBtn);
+        successContainer.appendChild(successContent);
+        
+        document.body.appendChild(successContainer);
+    }
+    
+    // Set message and show
+    document.getElementById('success-text').textContent = message;
+    successContainer.classList.remove('hidden');
+    
+    // Auto-dismiss after 3 seconds
+    setTimeout(dismissSuccessMessage, 3000);
+}
+
+function dismissSuccessMessage() {
+    const successContainer = document.getElementById('success-container');
+    if (successContainer) {
+        successContainer.classList.add('hidden');
+    }
 }
 
 function formatMonth(monthStr) {
