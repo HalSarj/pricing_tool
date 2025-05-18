@@ -112,27 +112,31 @@ function initializeApp() {
     // Initialize premium band selector for market share trends
     initializePremiumBandSelector();
     
-    // Set up event listeners with null checks
-    if (elements.esisFileInput) elements.esisFileInput.addEventListener('change', handleESISFileSelect);
-    if (elements.swapFileInput) elements.swapFileInput.addEventListener('change', handleSwapFileSelect);
-    if (elements.analyzeBtn) elements.analyzeBtn.addEventListener('click', processData);
-    if (elements.exportBtn) elements.exportBtn.addEventListener('click', exportData);
-    if (elements.applyFiltersBtn) elements.applyFiltersBtn.addEventListener('click', applyFilters);
-    if (elements.resetFiltersBtn) elements.resetFiltersBtn.addEventListener('click', resetFilters);
-    if (elements.dismissError) elements.dismissError.addEventListener('click', dismissError);
-    if (elements.applyMarketShareBtn) elements.applyMarketShareBtn.addEventListener('click', updateMarketShareTable);
-    if (elements.exportMarketShareBtn) elements.exportMarketShareBtn.addEventListener('click', exportMarketShareData);
+    // Set up non-filter event listeners
+    const nonFilterListeners = [
+        { element: 'esisFileInput', event: 'change', handler: handleESISFileSelect },
+        { element: 'swapFileInput', event: 'change', handler: handleSwapFileSelect },
+        { element: 'analyzeBtn', event: 'click', handler: processData },
+        { element: 'exportBtn', event: 'click', handler: exportData },
+        { element: 'applyFiltersBtn', event: 'click', handler: applyFilters },
+        { element: 'resetFiltersBtn', event: 'click', handler: resetFilters },
+        { element: 'dismissError', event: 'click', handler: dismissError },
+        { element: 'applyMarketShareBtn', event: 'click', handler: updateMarketShareTable },
+        { element: 'exportMarketShareBtn', event: 'click', handler: exportMarketShareData }
+    ];
     
-    // Initialize filter controls
-    if (elements.premiumMin) elements.premiumMin.addEventListener('change', validatePremiumRange);
-    if (elements.premiumMax) elements.premiumMax.addEventListener('change', validatePremiumRange);
+    // Add non-filter event listeners
+    nonFilterListeners.forEach(({ element, event, handler }) => {
+        if (elements[element]) {
+            elements[element].addEventListener(event, handler);
+            console.log(`Added ${event} listener to ${element}`);
+        }
+    });
     
-    // Add event listener for product term filter
-    if (elements.productTermFilter) {
-        elements.productTermFilter.addEventListener('change', applyFilters);
-    }
+    // Set up filter-related event listeners
+    setupFilterListeners();
     
-    console.log('Mortgage Market Analysis Tool initialized');
+    console.log('Mortgage Market Analysis Tool initialized with auto-applying filters');
 }
 
 // Function to ensure heatmap elements exist in the DOM
@@ -2025,127 +2029,124 @@ function applyFilters() {
     }
 }
 
+// Break down filtering into separate functions
+function dateRangeFilter(record, dateRange) {
+    if (!dateRange[0] || !dateRange[1]) return true;
+    if (!record.DocumentDate && !record.Month) return false;
+    const recordMonth = record.Month;
+    return recordMonth >= dateRange[0] && recordMonth <= dateRange[1];
+}
+
+function lenderFilter(record, lenders) {
+    if (!lenders || lenders.length === 0) return true;
+    const provider = (record.Provider || '').trim();
+    const baseLender = (record.BaseLender || '').trim();
+    return lenders.some(lender => provider === lender || baseLender === lender);
+}
+
+function premiumRangeFilter(record, premiumRange) {
+    // Handle 'N/A' PremiumBand
+    if (record.PremiumBand === 'N/A') {
+        return premiumRange[0] <= -50 && premiumRange[1] >= 250;
+    }
+    
+    // Handle records with PremiumOverSwap value
+    if (record.PremiumOverSwap !== null && record.PremiumOverSwap !== undefined) {
+        return record.PremiumOverSwap >= premiumRange[0] && record.PremiumOverSwap <= premiumRange[1];
+    }
+    
+    // Handle records with PremiumBand but no PremiumOverSwap
+    if (record.PremiumBand) {
+        // Extract the bounds of the premium band (e.g., '60-80' -> [60, 80])
+        const bandBounds = record.PremiumBand.split('-').map(Number);
+        const bandMin = bandBounds[0];
+        const bandMax = bandBounds[1] || bandBounds[0]; // Handle single value bands
+        
+        // Check if the band overlaps with the filter range
+        const filterMin = premiumRange[0];
+        const filterMax = premiumRange[1];
+        
+        // Check if there's any overlap between the band and filter range
+        return !(bandMin > filterMax || bandMax < filterMin);
+    }
+    
+    // If no PremiumBand or PremiumOverSwap, we can't determine if it should be filtered
+    return false;
+}
+
+function productTypeFilter(record, productTypes) {
+    if (!productTypes || productTypes.length === 0) return true;
+    return record.ProductType && productTypes.includes(record.ProductType);
+}
+
+function purchaseTypeFilter(record, purchaseTypes) {
+    if (!purchaseTypes || purchaseTypes.length === 0) return true;
+    return record.PurchaseType && purchaseTypes.includes(record.PurchaseType);
+}
+
+function ltvRangeFilter(record, ltvRange, ltvFilterStats) {
+    if (ltvRange === 'all') return true;
+    
+    // Use standardized LTV field from mapping
+    let ltv = record.StandardizedLTV;
+    
+    // If LTV is available, filter by it
+    if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+        if (ltvRange === 'below-80' && ltv >= 80) {
+            // DEBUG: Log some filtered records for verification
+            if (Math.random() < 0.01) { // Log ~1% of filtered records to avoid console spam
+                console.log(`LTV Filter: Excluding record with LTV=${ltv}% (≥80%) from below-80 filter`, 
+                          { provider: record.Provider, loan: record.Loan, ltv: ltv });
+            }
+            return false;
+        } else if (ltvRange === 'above-80' && ltv < 80) {
+            // DEBUG: Log some filtered records for verification
+            if (Math.random() < 0.01) { // Log ~1% of filtered records to avoid console spam
+                console.log(`LTV Filter: Excluding record with LTV=${ltv}% (<80%) from above-80 filter`, 
+                          { provider: record.Provider, loan: record.Loan, ltv: ltv });
+            }
+            return false;
+        }
+        return true;
+    } else {
+        // If LTV is not available, we can't filter by it
+        // For debugging, count how many records are missing LTV data
+        if (!ltvFilterStats) {
+            ltvFilterStats = { missingLtvCount: 0, totalProcessed: 0 };
+        }
+        ltvFilterStats.missingLtvCount++;
+        ltvFilterStats.totalProcessed++;
+        
+        // Log every 100th missing record to avoid console spam
+        if (ltvFilterStats.missingLtvCount % 100 === 0) {
+            console.log(`LTV Filter: ${ltvFilterStats.missingLtvCount} records missing LTV data out of ${ltvFilterStats.totalProcessed} processed`);
+        }
+        return true;
+    }
+}
+
+// Main filter function that composes the individual filters
 function filterData(data) {
     if (!data || !Array.isArray(data)) {
         console.error('Invalid data provided to filterData:', data);
         return [];
     }
     
+    // Initialize LTV filter stats if needed
+    if (!state.ltvFilterStats) {
+        state.ltvFilterStats = { missingLtvCount: 0, totalProcessed: 0 };
+    }
+    
     return data.filter(record => {
         try {
-            // Skip invalid records
-            if (!record || typeof record !== 'object') {
-                return false;
-            }
+            if (!record || typeof record !== 'object') return false;
             
-            // Filter by date range
-            if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
-                if (!record.DocumentDate || !record.Month) { 
-                    return false;
-                }
-                const recordMonth = record.Month; 
-                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
-                    return false;
-                }
-            }
-            
-            // Filter by lender
-            if (state.filters.lenders && state.filters.lenders.length > 0) {
-                const provider = (record.Provider || '').trim();
-                const baseLender = (record.BaseLender || '').trim();
-                const matchesLender = state.filters.lenders.some(lender => {
-                    return provider === lender || baseLender === lender;
-                });
-                if (!matchesLender) {
-                    return false;
-                }
-            }
-            
-            // Filter by premium range
-            if (record.PremiumBand === 'N/A') {
-                if (state.filters.premiumRange[0] > -50 || state.filters.premiumRange[1] < 250) { 
-                    return false;
-                }
-            } else if (record.PremiumOverSwap === null || record.PremiumOverSwap === undefined) {
-                // Handle records where PremiumOverSwap is not defined but we have a PremiumBand
-                if (record.PremiumBand) {
-                    // Extract the bounds of the premium band (e.g., '60-80' -> [60, 80])
-                    const bandBounds = record.PremiumBand.split('-').map(Number);
-                    const bandMin = bandBounds[0];
-                    const bandMax = bandBounds[1] || bandBounds[0]; // Handle single value bands
-                    
-                    // Check if the band overlaps with the filter range
-                    const filterMin = state.filters.premiumRange[0];
-                    const filterMax = state.filters.premiumRange[1];
-                    
-                    // Check if the band is completely outside the filter range
-                    if (bandMin > filterMax || bandMax < filterMin) {
-                        return false;
-                    }
-                    // Otherwise keep it (there's some overlap)
-                    return true;
-                }
-                // If no PremiumBand, we can't determine if it should be filtered
-                return false;
-            } else if (record.PremiumOverSwap < state.filters.premiumRange[0] || record.PremiumOverSwap > state.filters.premiumRange[1]) {
-                // For records with explicit PremiumOverSwap values, filter based on that
-                return false;
-            }
-            
-            // Filter by product type
-            if (state.filters.productTypes.length > 0) {
-                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by purchase type
-            if (state.filters.purchaseTypes.length > 0) {
-                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by LTV range
-            if (state.filters.ltvRange !== 'all') {
-                // Use our standardized LTV field from mapping
-                let ltv = record.StandardizedLTV;
-                
-                // If LTV is available, filter by it
-                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
-                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
-                        // DEBUG: Log some filtered records for verification
-                        if (Math.random() < 0.01) { // Log ~1% of filtered records to avoid console spam
-                            console.log(`LTV Filter: Excluding record with LTV=${ltv}% (≥80%) from below-80 filter`, 
-                                      { provider: record.Provider, loan: record.Loan, ltv: ltv });
-                        }
-                        return false;
-                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
-                        // DEBUG: Log some filtered records for verification
-                        if (Math.random() < 0.01) { // Log ~1% of filtered records to avoid console spam
-                            console.log(`LTV Filter: Excluding record with LTV=${ltv}% (<80%) from above-80 filter`, 
-                                      { provider: record.Provider, loan: record.Loan, ltv: ltv });
-                        }
-                        return false;
-                    }
-                } else {
-                    // If LTV is not available, we can't filter by it
-                    // For debugging, count how many records are missing LTV data
-                    if (!state.ltvFilterStats) {
-                        state.ltvFilterStats = { missingLtvCount: 0, totalProcessed: 0 };
-                    }
-                    state.ltvFilterStats.missingLtvCount++;
-                    state.ltvFilterStats.totalProcessed++;
-                    
-                    // Log every 100th missing record to avoid console spam
-                    if (state.ltvFilterStats.missingLtvCount % 100 === 0) {
-                        console.log(`LTV Filter: ${state.ltvFilterStats.missingLtvCount} records missing LTV data out of ${state.ltvFilterStats.totalProcessed} processed`);
-                    }
-                }
-            }
-            
-            // Debug statement removed to improve performance
-            return true;
+            return dateRangeFilter(record, state.filters.dateRange) &&
+                   lenderFilter(record, state.filters.lenders) &&
+                   premiumRangeFilter(record, state.filters.premiumRange) &&
+                   productTypeFilter(record, state.filters.productTypes) &&
+                   purchaseTypeFilter(record, state.filters.purchaseTypes) &&
+                   ltvRangeFilter(record, state.filters.ltvRange, state.ltvFilterStats);
         } catch (error) {
             console.error('Error filtering record:', error, record);
             return false;
@@ -4863,4 +4864,49 @@ function validatePremiumRange() {
     if (min > max) {
         elements.premiumMax.value = min;
     }
+}
+
+/**
+ * Centralizes all filter-related event handling
+ * Sets up event listeners for all filter controls with proper null checks
+ * Prevents duplicate listeners by removing any existing ones first
+ */
+function setupFilterListeners() {
+    // Define all filter controls and their event handlers
+    const filterControls = [
+        // Standard filters that trigger applyFilters
+        { element: 'productTermFilter', event: 'change', handler: applyFilters },
+        { element: 'ltvFilter', event: 'change', handler: applyFilters },
+        { element: 'lenderFilter', event: 'change', handler: applyFilters },
+        { element: 'productType', event: 'change', handler: applyFilters },
+        { element: 'purchaseType', event: 'change', handler: applyFilters },
+        { element: 'dateStart', event: 'change', handler: applyFilters },
+        { element: 'dateEnd', event: 'change', handler: applyFilters },
+        
+        // Special filter controls with custom handlers
+        { element: 'premiumMin', event: 'change', handler: validatePremiumRange },
+        { element: 'premiumMax', event: 'change', handler: validatePremiumRange }
+    ];
+    
+    // Set up each filter control's event listener
+    filterControls.forEach(({ element, event, handler }) => {
+        if (elements[element]) {
+            // Remove any existing listeners to prevent duplicates
+            // Note: We create a clone to effectively remove all listeners
+            const originalElement = elements[element];
+            const newElement = originalElement.cloneNode(true);
+            originalElement.parentNode.replaceChild(newElement, originalElement);
+            
+            // Update the reference in the elements object
+            elements[element] = newElement;
+            
+            // Add the new listener
+            elements[element].addEventListener(event, handler);
+            
+            // Log for debugging
+            console.log(`Added ${event} listener to filter control: ${element}`);
+        } else {
+            console.warn(`Filter control not found: ${element}`);
+        }
+    });
 }
