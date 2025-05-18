@@ -1620,7 +1620,7 @@ function renderTable() {
             }
         });
     }
-} // End of renderTable function
+// End of renderTable function
 
 // Declare prepareTableData function
 function prepareTableData(currentProcessedData) {
