@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # Add timeout to prevent hanging builds
 
     strategy:
       matrix:
@@ -23,8 +24,19 @@ jobs:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
     
-    - name: Install dependencies
-      run: npm install --no-fund --no-audit --legacy-peer-deps
+    - name: Setup npm cache
+      uses: actions/cache@v3
+      with:
+        path: ~/.npm
+        key: ${{ runner.os }}-node-${{ hashFiles('**/package.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-
+    
+    - name: Clean install dependencies
+      run: |
+        npm cache clean --force
+        rm -rf node_modules package-lock.json
+        npm install --no-fund --no-audit --legacy-peer-deps --prefer-offline --no-optional
       
     - name: Create jest.setup.js if missing
       run: |
@@ -32,14 +44,15 @@ jobs:
           echo "require('@testing-library/jest-dom');" > jest.setup.js
         fi
     
-    - name: Install Jest globally
-      run: npm install -g jest
-    
     - name: Run tests
-      run: jest --passWithNoTests
+      run: npx jest --passWithNoTests --forceExit
+      env:
+        CI: true
       
     - name: Run tests with coverage
-      run: jest --coverage --passWithNoTests
+      run: npx jest --coverage --passWithNoTests --forceExit
+      env:
+        CI: true
     
     - name: Upload coverage reports
       uses: codecov/codecov-action@v3
