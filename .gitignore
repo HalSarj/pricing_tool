@@ -24,8 +24,15 @@ node_modules/
 # OS specific
 .DS_Store
 
-# Exclude all subdirectories
-*/
+# Exclude some subdirectories
+*/data/
+*/.roo/
+*/.cursor/
+
+# Large data files
+data/FULL ESIS.csv
+*.csv
+*.xlsx
 
 # Include only root files needed for the website
 !index.html
@@ -34,3 +41,8 @@ node_modules/
 !Favicon.png
 !README.md
 !.nojekyll
+
+# Added by Claude Task Master
+# Task files
+tasks.json
+tasks/ 

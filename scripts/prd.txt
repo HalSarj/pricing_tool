@@ -1,231 +1,141 @@
-# Product Requirements Document: Mortgage Market Analysis Tool
+Create a comprehensive test suite for my Mortgage Market Analysis Tool JavaScript application using Jest as the primary testing framework. The test implementation should be easy to set up and run by any developer working on the project.
 
-## Overview
-The Mortgage Market Analysis Tool is a data analysis application that combines swap rate data with ESIS (European Standardised Information Sheet) data to calculate premium over swap rates for mortgage products across the market. The tool will enable Generation Home's Chief Commercial Officer to analyze mortgage pricing trends by visualizing loan amounts categorized by premium bands and time periods, supporting strategic pricing decisions.
+## Testing Framework Details
 
-## Problem Statement
-Generation Home needs to analyze how its mortgage products are priced relative to market swap rates compared to competitors. Currently, this requires manual data processing to:
-1. Match ESIS data with corresponding swap rates
-2. Calculate premiums over swap rates
-3. Aggregate loan amounts by premium bands and time periods
-4. Analyze trends and market positioning
+Use the following frameworks and tools:
+- Jest: For the primary testing framework, assertions, and test running
+- JSDOM: For DOM manipulation testing
+- jest-environment-jsdom: For simulating browser environment
+- @testing-library/jest-dom: For enhanced DOM element assertions
+- Puppeteer (optional): Only if end-to-end browser testing is required
 
-An automated tool would significantly reduce analysis time and enable more frequent and detailed market assessments.
+## Setup Instructions
 
-## User Personas
-**Primary User:** Chief Commercial Officer at Generation Home
-- Needs to make strategic pricing decisions
-- Has high financial literacy and familiarity with mortgage market concepts
-- Requires actionable insights rather than just raw data
+Include clear instructions for setting up the test environment:
 
-**Secondary Users:** Pricing analysts and commercial team members
-- Support the CCO with data-driven recommendations
-- Need to perform ad-hoc analyses on market positioning
+1. Create a package.json with all necessary testing dependencies:
+```json
+{
+  "devDependencies": {
+    "jest": "^29.5.0",
+    "jest-environment-jsdom": "^29.5.0",
+    "@testing-library/jest-dom": "^5.16.5",
+    "puppeteer": "^20.1.0" // Optional for E2E tests
+  },
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  }
+}
+```
 
-## Goals and Success Metrics
-1. Reduce time spent on manual data processing by 90%
-2. Enable more frequent (weekly vs. monthly) market position analyses
-3. Improve pricing strategy with data-driven insights
-4. Identify market opportunities in specific premium bands
-5. Track Generation Home's competitive position over time
+Include a jest.config.js file with the proper configuration:
 
-## Input Requirements
-The tool will accept two CSV files:
+```js
+module.exports = {
+  testEnvironment: 'jsdom',
+  setupFilesAfterEnv: ['./jest.setup.js'],
+  verbose: true,
+  collectCoverageFrom: ['src/**/*.js', '!**/node_modules/**'],
+}
+```
 
-**1. Swap Rates Dataset**
-- Fields: product_term_in_months, rate, effective_at
-- Contains swap rates for various terms with corresponding effective dates
-- Example format shown in the provided sample data
+Include a jest.setup.js file that imports the necessary testing utilities:
 
-**2. ESIS Dataset**
-- Fields: DocumentDate, BaseLender, Description, Type, Loan, LTV, InitialFees, ProductType, TieInPeriod, InitialRate, PurchaseType
-- Contains mortgage offer details from various lenders
-- Example format shown in the provided sample data
+```js
+require('@testing-library/jest-dom');
+// Any other global test setup
+```
 
-## Functional Requirements
+## Data Structure
+I need the generated mock data to EXACTLY match my current data format. Use the field structure below as the precise blueprint for mock data generation:
 
-### Core Features
+### ESIS Data fields:
+- Provider: string (lender name)
+- BaseLender: string (same as Provider in most cases)
+- DocumentDate: date (format: YYYY-MM-DD)
+- Timestamp: date (same as DocumentDate)
+- Rate: number (e.g., 3.99)
+- InitialRate: number (same as Rate)
+- Loan: number (loan amount in GBP)
+- LTV: number (loan-to-value ratio, e.g., 75)
+- ProductType: string (e.g., "Fixed Rate", "Variable Rate")
+- PurchaseType: string (e.g., "First Time Buyer", "Home mover", "Remortgage")
+- TieInPeriod: number (typically 24 or 60 for 2-year or 5-year fixed)
 
-#### 1. Data Processing
-- **Requirement:** Import and process ESIS and swap rate CSV data
-- **Details:**
-  - Match each ESIS record with the corresponding swap rate based on DocumentDate and product_term_in_months
-  - Calculate premium over swap rate for each ESIS (InitialRate - swap_rate)
-  - Group data by calendar month
-  - Categorize each ESIS into premium bands of 20 basis points
-  - Sum loan amounts within each premium band and month
+### Swap Rate Data fields:
+- Date: date (format: YYYY-MM-DD)
+- effective_at: date (same as Date)
+- product_term_in_months: number (24 or 60)
+- rate: number (e.g., 1.234)
 
-#### 2. Data Visualization
-- **Requirement:** Display processed data in a tabular format with interactive filtering
-- **Details:**
-  - Primary view: Table showing loan amounts by month (columns) and premium band (rows)
-  - Each cell represents the total loan amount for that month and premium band
-  - Include summary row and column with totals
+## Test Organization
+Organize tests logically into distinct files:
 
-#### 3. Interactive Filtering
-- **Requirement:** Enable users to filter and analyze specific segments of data
-- **Details:**
-  - Date range selector to analyze specific time periods
-  - Premium range selector to focus on specific premium bands
-  - Lender filter to include/exclude specific lenders
-  - Ability to filter by product type, purchase type, and other ESIS attributes
+- mockData.test.js - Test the mock data generation functions
+- dataProcessing.test.js - Test data transformation functions
+- calculation.test.js - Test numerical calculation functions
+- filtering.test.js - Test data filtering logic
+- visualization.test.js - Test UI rendering functions
+- integration.test.js - Test multiple functions working together
+- performance.test.js - Test application performance with large datasets
 
-#### 4. Data Export
-- **Requirement:** Allow export of filtered data for further analysis
-- **Details:**
-  - Export to CSV format
-  - Include all calculated fields (premium over swap, etc.)
-  - Option to export summary tables or detailed records
+## Running Tests
+Include clear instructions on how to run the tests:
 
-### Secondary Features
+- Standard test run: npm test
+- Watch mode for development: npm run test:watch
+- With coverage report: npm run test:coverage
 
-#### 5. Comparative Analysis
-- **Requirement:** Enable comparison of Generation Home vs. market
-- **Details:**
-  - Highlight Gen H positions within the overall market
-  - Calculate market share by premium band
-  - Track positioning changes over time
+## Testing Requirements
+Create tests for these key components:
 
-#### 6. Trend Analysis
-- **Requirement:** Visualize premium band trends over time
-- **Details:**
-  - Option to view data as a line chart showing premium band movements
-  - Identify shifts in market pricing strategy
+### Data Processing Functions:
+- Test mapFieldNames for field normalization
+- Test normalizeProductTerm for proper term classification
+- Test findMatchingSwapRate for correct rate matching
+- Test calculatePremiumOverSwap for accurate premium calculations
+- Test assignPremiumBand for correct band assignment
+- Test enrichEsisData for proper data enhancement
 
-## Technical Requirements
+### Aggregation and Filtering:
+- Test aggregateByPremiumBandAndMonth for correct data grouping
+- Test filterData with various filter combinations
+- Test getDataByProductTerm for product term filtering
+- Test performance with large datasets (1000+ records)
 
-### Performance
-- Process datasets containing up to 100,000 ESIS records efficiently
-- Complete all calculations and display results in under 30 seconds
-- Support interactive filtering with response times under 2 seconds
+### Visualization Components:
+- Test prepareTableData for correct data formatting
+- Test renderTable for proper table generation
+- Test populatePremiumBandSelect for UI element creation
+- Test updateMarketShareTable for correct market share calculations
+- Test prepareHeatmapData and renderHeatmap for heatmap visualization
+- Test groupByMonthAndLender and renderTrendsChart for trends visualization
 
-### Data Handling
-- Handle CSV files up to 50MB in size
-- Account for missing or inconsistent data in input files
-- Validate input data and provide clear error messages
+### User Interaction:
+- Test applyFilters with various user selections
+- Test resetFilters for proper state restoration
+- Test exportData and exportMarketShareData for correct export functionality
 
-### Compatibility
-- Desktop application compatible with Windows 10/11
-- No internet connection required for core functionality
-- Store processed results for quick reanalysis
+Use realistic values within these ranges:
+- Loan amounts: £100,000 to £1,000,000
+- LTV: 50% to 95%
+- Rate: 1% to 7%
+- Swap rates: 0.5% to 4%
 
-### User Interface
-- Clean, professional interface suitable for financial analysis
-- Table view with conditional formatting to highlight key insights
-- Intuitive filtering controls
-- Responsive design that works well on desktop displays
+For lender names, use a mix of common UK banks and building societies like: "Nationwide Building Society", "Barclays Bank UK PLC", "HSBC UK", "NatWest", "Santander UK", "Halifax", "Lloyds Bank".
 
-## User Flow
+Begin with detailed mock data generator functions that precisely match my existing data structure. Then structure the tests hierarchically, starting with unit tests for core functions and building up to integration and UI tests.
 
-1. **Data Import**
-   - User uploads two CSV files (swap rates and ESIS data)
-   - System validates file format and displays preview
-   - User confirms import
+## Documentation
+Include detailed comments explaining:
+- What each test is verifying
+- Why specific test values were chosen
+- Any edge cases being tested
 
-2. **Initial Analysis**
-   - System processes data and calculates premium over swap for each ESIS
-   - System categorizes data into 20 bps premium bands
-   - System generates default table view showing last 12 months
+Each test file should start with a descriptive header explaining its purpose.
 
-3. **Refinement**
-   - User adjusts time period as needed
-   - User filters by specific lenders or other attributes
-   - User selects premium range of interest
-
-4. **Insights & Export**
-   - User reviews data in table format
-   - User exports filtered data for presentation or further analysis
-
-## Detailed Specifications
-
-### Premium Band Calculation
-- Create premium bands starting from the lowest premium with any data
-- Use consistent 20 basis point bands (e.g., 100-120 bps, 120-140 bps)
-- Display bands as rows in the analysis table
-
-### Date Matching Logic
-- Match ESIS DocumentDate with the closest preceding swap rate effective_at date
-- For ESIS records with no matching swap rate date, use the closest available rate
-
-### User Interface Components
-
-#### Main Dashboard
-- Filter panel (left side):
-  - Date range selector
-  - Lender multi-select dropdown
-  - Premium range selector
-  - Additional filters (Product Type, Purchase Type, etc.)
-- Data visualization area (center/right):
-  - Primary table view with:
-    - Rows: Premium bands (20 bps increments)
-    - Columns: Months
-    - Cells: Total loan amount
-    - Conditional formatting to highlight cells by volume
-
-#### Controls
-- Export button
-- Reset filters button
-- View options (table, summary, etc.)
-
-## Constraints and Considerations
-
-### Data Privacy
-- Tool is for internal use only
-- No PII (Personally Identifiable Information) should be included in the datasets
-- Access limited to authorized commercial team members
-
-### Technical Implementation
-- Implement as a standalone desktop application or internal web application
-- Ensure compatibility with company's existing systems
-- No external APIs or data sources required
-
-## Future Enhancements (v2.0)
-1. Advanced visualization options (heatmaps, bubble charts)
-2. Time series forecasting of premium trends
-3. Integration with live data sources
-4. Automated regular reports
-5. Market share projection tools
-
-## Implementation Timeline
-
-### Phase 1 (4 weeks)
-- Requirements finalization and design
-- Core data processing implementation
-- Basic UI development
-
-### Phase 2 (3 weeks)
-- Interactive filtering implementation
-- Export functionality
-- Testing and refinement
-
-### Phase 3 (1 week)
-- Deployment and user training
-- Documentation
-- Feedback collection
-
-## Appendix
-
-### Data Dictionary
-
-**Swap Rate Dataset Fields:**
-- `product_term_in_months`: Term of the swap rate in months (e.g., 60 for 5-year fixed)
-- `rate`: The swap rate as a decimal (e.g., 0.0326 = 3.26%)
-- `effective_at`: Date and time when the swap rate became effective
-
-**ESIS Dataset Fields:**
-- `DocumentDate`: Date and time when the ESIS was issued
-- `BaseLender`: Financial institution offering the mortgage
-- `Description`: Description of the mortgage product
-- `Type`: Type of property (e.g., Residential)
-- `Loan`: Loan amount in GBP
-- `LTV`: Loan-to-Value ratio
-- `InitialFees`: Initial fees associated with the mortgage
-- `ProductType`: Type of product (e.g., fix)
-- `TieInPeriod`: Period in months during which early repayment charges apply
-- `InitialRate`: Initial interest rate as a percentage
-- `PurchaseType`: Type of purchase (e.g., First Time Buyer, Home mover)
-
-**Calculated Fields:**
-- `SwapRate`: Matching swap rate for the ESIS
-- `PremiumOverSwap`: Difference between InitialRate and SwapRate in basis points
-- `PremiumBand`: 20 bps band categorization of the premium
+## Mocking Strategy
+For DOM tests, provide a clear strategy for mocking browser elements and include helper functions for setting up the document environment.
+Include examples of mocking global objects like document, Chart.js, and Tabulator.
