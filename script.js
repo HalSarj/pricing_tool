@@ -1620,8 +1620,13 @@ function renderTable() {
             }
         });
     }
-} // End of previous function
+} // End of renderTable function
 
+/**
+ * Prepares data for the results table
+ * @param {Object} currentProcessedData - The processed data to prepare for display
+ * @returns {Array} - Formatted data for the table
+ */
 function prepareTableData(currentProcessedData) {
     const tableData = [];
     
