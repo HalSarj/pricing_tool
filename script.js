@@ -1622,11 +1622,7 @@ function renderTable() {
     }
 } // End of renderTable function
 
-/**
- * Prepares data for the results table
- * @param {Object} currentProcessedData - The processed data to prepare for display
- * @returns {Array} - Formatted data for the table
- */
+// Declare prepareTableData function
 function prepareTableData(currentProcessedData) {
     const tableData = [];
     
