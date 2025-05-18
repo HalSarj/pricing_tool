@@ -6,12 +6,18 @@
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "test:ci": "jest --config jest.config.ci.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "devDependencies": {
     "jest": "^29.5.0",
     "jest-environment-jsdom": "^29.5.0",
     "@testing-library/jest-dom": "^5.16.5",
-    "puppeteer": "^20.1.0"
+    "puppeteer": "^20.1.0",
+    "jest-junit": "^16.0.0",
+    "eslint": "^8.40.0",
+    "eslint-plugin-jest": "^27.2.1"
   }
 }

@@ -116,6 +116,25 @@ This tool can be easily deployed to GitHub Pages:
 2. Enable GitHub Pages in the repository settings
 3. The tool will be available at https://[username].github.io/mortgage-analysis-tool
 
+## Continuous Integration
+
+[![Test Suite](https://github.com/username/mortgage-market-analysis-tool/actions/workflows/test.yml/badge.svg)](https://github.com/username/mortgage-market-analysis-tool/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/username/mortgage-market-analysis-tool/branch/main/graph/badge.svg)](https://codecov.io/gh/username/mortgage-market-analysis-tool)
+
+This project uses continuous integration to automatically run tests on code changes. The test suite is run on multiple Node.js versions to ensure compatibility.
+
+### CI Workflow
+
+1. On each push or pull request to main/master/develop branches:
+   - Install dependencies
+   - Run the test suite
+   - Generate and upload coverage reports
+
+### Coverage Requirements
+
+- Minimum coverage: 80%
+- Coverage reports are uploaded to Codecov
+
 ## License
 
 This project is licensed under the MIT License.
