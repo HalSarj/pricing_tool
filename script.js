@@ -7,6 +7,7 @@ const state = {
     processedData: null,
     table: null,
     marketShareTable: null,
+    filterCache: null,
     filters: {
         dateRange: [null, null],
         lenders: [],
@@ -28,6 +29,65 @@ const state = {
     overallTotalMarket: 0,      // For overall % of market calculation
     lenderMarketShareData: null  // For lender market share analysis
 };
+
+/**
+ * Wraps a function with standardized error handling
+ * @param {Function} fn - The function to wrap
+ * @param {string} functionName - Name of the function for logging
+ * @param {Function} onError - Optional custom error handler
+ * @returns {Function} Wrapped function with error handling
+ */
+function withErrorHandling(fn, functionName, onError) {
+  return function(...args) {
+    try {
+      return fn.apply(this, args);
+    } catch (error) {
+      console.error(`Error in ${functionName}:`, error);
+      
+      // Use custom error handler if provided, otherwise use default
+      if (typeof onError === 'function') {
+        onError(error);
+      } else {
+        // Default error handling
+        showError(`An error occurred while ${functionName.replace(/([A-Z])/g, ' $1').toLowerCase()}: ${error.message}`);
+      }
+      
+      // Hide any loading indicators that might be showing
+      showLoading(false);
+      
+      // Return a safe default value based on the expected return type
+      return null;
+    }
+  };
+}
+
+/**
+ * Wraps an async function with standardized error handling
+ * @param {Function} fn - The async function to wrap
+ * @param {string} functionName - Name of the function for logging
+ * @param {Function} onError - Optional custom error handler
+ * @returns {Function} Wrapped async function with error handling
+ */
+function withAsyncErrorHandling(fn, functionName, onError) {
+  return async function(...args) {
+    try {
+      return await fn.apply(this, args);
+    } catch (error) {
+      console.error(`Error in async ${functionName}:`, error);
+      
+      if (typeof onError === 'function') {
+        onError(error);
+      } else {
+        showError(`An error occurred while ${functionName.replace(/([A-Z])/g, ' $1').toLowerCase()}: ${error.message}`);
+      }
+      
+      // Hide any loading indicators that might be showing
+      showLoading(false);
+      
+      return null;
+    }
+  };
+}
 
 // DOM Elements
 const elements = {
@@ -138,6 +198,26 @@ function initializeApp() {
     
     console.log('Mortgage Market Analysis Tool initialized with auto-applying filters');
 }
+
+// Apply error handling wrappers to critical functions
+// Core data processing functions
+processData = withAsyncErrorHandling(processData, 'processData');
+enrichEsisData = withErrorHandling(enrichEsisData, 'enrichEsisData');
+mapFieldNames = withErrorHandling(mapFieldNames, 'mapFieldNames');
+aggregateByPremiumBandAndMonth = withErrorHandling(aggregateByPremiumBandAndMonth, 'aggregateByPremiumBandAndMonth');
+
+// File handling functions
+parseCSVFile = withAsyncErrorHandling(parseCSVFile, 'parseCSVFile');
+parseExcelFile = withAsyncErrorHandling(parseExcelFile, 'parseExcelFile');
+
+// UI and visualization functions
+renderTable = withErrorHandling(renderTable, 'renderTable');
+applyFilters = withErrorHandling(applyFilters, 'applyFilters');
+updateMarketShareTable = withErrorHandling(updateMarketShareTable, 'updateMarketShareTable');
+updateHeatmap = withErrorHandling(updateHeatmap, 'updateHeatmap');
+renderTrendsChart = withErrorHandling(renderTrendsChart, 'renderTrendsChart');
+
+console.log('Error handling wrappers applied to critical functions');
 
 // Function to ensure heatmap elements exist in the DOM
 function ensureHeatmapElementsExist() {
@@ -286,205 +366,205 @@ function formatFileSize(bytes) {
 
 // Data Processing Functions
 async function processData() {
-    try {
-        showLoading(true);
-        
-        // Check if files are selected
-        const esisFile = elements.esisFileInput.files[0];
-        const swapFile = elements.swapFileInput.files[0];
-        
-        if (!esisFile || !swapFile) {
-            throw new Error('Please select both ESIS data and Swap Rates files');
-        }
-        
-        // Reset market share filters when loading new data
-        state.marketShareFilters.selectedPremiumBands = [];
-        
-        // Parse ESIS data
-        state.esisData = await parseCSVFile(esisFile);
-        
-        // DEBUG: Log raw loan total immediately after parsing
-        const rawLoanTotal = state.esisData.reduce((sum, record) => sum + (parseFloat(record.Loan) || 0), 0);
-        console.log('DEBUG - Raw loan total from CSV:', rawLoanTotal.toLocaleString());
-        
-        // DEBUG: Log sample loan amounts from raw data
-        if (state.esisData.length > 0) {
-            console.log('DEBUG - Sample raw loan amounts from first 5 records:');
-            state.esisData.slice(0, 5).forEach((record, idx) => {
-                console.log(`Record ${idx}: Raw Loan=${record.Loan}, Type=${typeof record.Loan}`);
-            });
-        }
-        
-        // DEBUG: Check for duplicate records in raw data and deduplicate
-        const uniqueIds = new Set();
-        const uniqueRecords = [];
-        const duplicates = [];
-        
-        state.esisData.forEach(record => {
-            // Use id if available, otherwise create a composite key
-            const id = record.id || `${record.Provider}-${record.DocumentDate}-${record.Loan}`;
-            if (uniqueIds.has(id)) {
-                duplicates.push(record);
-            } else {
-                uniqueIds.add(id);
-                uniqueRecords.push(record);
-            }
-        });
-        
-        console.log('DEBUG - Number of potential duplicate records in raw data:', duplicates.length);
-        console.log('DEBUG - Number of unique records after deduplication:', uniqueRecords.length);
-        
-        // Replace the original data with deduplicated data
-        state.esisData = uniqueRecords;
-        
-        // Map field names first, so validateData can use standardized names
-        mapFieldNames(); 
-        
-        // Parse Swap Rates data (CSV or Excel)
-        if (swapFile.name.endsWith('.csv')) {
-            state.swapRatesData = await parseCSVFile(swapFile);
-        } else if (swapFile.name.endsWith('.xlsx')) {
-            const swapData = await parseExcelFile(swapFile);
-            console.log('Raw swapData from Excel:', swapData ? JSON.stringify(swapData.slice(0, 5)) : 'null'); // Log first 5 raw records
-            
-            state.swapRatesData = swapData
-                .map(row => {
-                    // Attempt to parse the date. Robustly handle different possible date inputs if necessary.
-                    // For now, assuming row.Date is in a format moment() can parse directly or is an Excel date serial number.
-                    const effectiveDate = moment(row.Date); 
-                    return {
-                        effective_at: effectiveDate.isValid() ? effectiveDate.toDate() : null, // Store as Date object
-                        product_term_in_months: parseInt(row['TieInPeriod'], 10),
-                        rate: parseFloat(row['Rate'])
-                    };
-                })
-                .filter(rate => 
-                    rate.effective_at instanceof Date && !isNaN(rate.effective_at.getTime()) && // Check for valid Date object
-                    !isNaN(rate.product_term_in_months) && 
-                    !isNaN(rate.rate)
-                ); // Filter out invalid rates more robustly
-            
-            console.log('Processed state.swapRatesData:', state.swapRatesData ? JSON.stringify(state.swapRatesData.slice(0, 5).map(r => ({...r, effective_at: r.effective_at ? r.effective_at.toISOString() : null }))) : 'null'); // Log with ISO dates
-            if (!state.swapRatesData || state.swapRatesData.length === 0) {
-                console.warn('state.swapRatesData is empty or null after processing. Check Excel sheet and parsing logic.');
-            }
-        } else {
-            throw new Error('Unsupported swap rates file format. Please use CSV or XLSX.');
-        }
-        
-        // Validate data (now after mapFieldNames)
-        validateData();
-        
-        // DEBUG: Simple verification total - sum all loans without any grouping
-        const simpleVerificationTotal = state.esisData.reduce((sum, record) => sum + (record.Loan || 0), 0);
-        console.log('DEBUG - Simple verification total (just summing all loans):', simpleVerificationTotal.toLocaleString());
-        
-        // Enrich state.esisData with PremiumBand and Month
-        state.esisData = enrichEsisData(state.esisData);
-        
-        // Initialize the premium band selector for market share trends
-        initializePremiumBandSelector();
-        
-        // Make sure the market share trends section is visible
-        if (elements.marketShareTrendsSection) {
-            elements.marketShareTrendsSection.classList.remove('hidden');
-        }
-        
-        // Log product type counts to verify both 2-year and 5-year products are present
-        const twoYearCount = state.esisData.filter(r => r.NormalizedTerm === 24).length;
-        const fiveYearCount = state.esisData.filter(r => r.NormalizedTerm === 60).length;
-        const totalCount = state.esisData.length;
-        const twoYearPercent = ((twoYearCount / totalCount) * 100).toFixed(2);
-        const fiveYearPercent = ((fiveYearCount / totalCount) * 100).toFixed(2);
-        
-        console.log('=== PRODUCT TYPE VERIFICATION ===');
-        console.log(`Total products processed: ${totalCount}`);
-        console.log(`2-year fixed products: ${twoYearCount} (${twoYearPercent}%)`);
-        console.log(`5-year fixed products: ${fiveYearCount} (${fiveYearPercent}%)`);
-        console.log(`Other term products: ${totalCount - twoYearCount - fiveYearCount} (${(100 - parseFloat(twoYearPercent) - parseFloat(fiveYearPercent)).toFixed(2)}%)`);
-        
-        // Warning if either product type is missing or significantly imbalanced
-        if (twoYearCount === 0 || fiveYearCount === 0) {
-            console.warn('WARNING: One or more product types are missing from the dataset!');
-        } else if (twoYearCount < 0.1 * totalCount || fiveYearCount < 0.1 * totalCount) {
-            console.warn('WARNING: Product type distribution is significantly imbalanced (one type < 10% of total).');
-        }
-        console.log('=================================');
-        
-        // DEBUG: Calculate total loan amount after enrichment
-        const postEnrichmentTotal = state.esisData.reduce((sum, record) => sum + (record.Loan || 0), 0);
-        console.log('DEBUG - Total loan amount after enrichment:', postEnrichmentTotal.toLocaleString());
-        
-        // Aggregate the enriched data for charts/processed views
-        state.processedData = aggregateByPremiumBandAndMonth(state.esisData);
-
-        // Store total market figures from the initial full dataset processing
-        if (state.processedData && state.processedData.totals) {
-            state.totalMarketByPremiumBand = { ...state.processedData.totals.byPremiumBand }; // Shallow copy
-            state.overallTotalMarket = state.processedData.totals.overall;
-            console.log('Initial Total Market by Premium Band:', JSON.stringify(state.totalMarketByPremiumBand));
-            console.log('Initial Overall Total Market:', state.overallTotalMarket.toLocaleString());
-            
-            // DEBUG: Compare with our simple verification total
-            console.log('DEBUG - Comparison of totals:', {
-                'Simple verification total': simpleVerificationTotal.toLocaleString(),
-                'Aggregated overall total': state.overallTotalMarket.toLocaleString(),
-                'Ratio (aggregated/simple)': (state.overallTotalMarket / simpleVerificationTotal).toFixed(2)
-            });
-        } else {
-            state.totalMarketByPremiumBand = {};
-            state.overallTotalMarket = 0;
-            console.warn('Could not set initial market totals, processedData or its totals are missing.');
-        }
-
-        // Update UI with results - always update filters first
-        updateFilters();
-        renderTable();
-
-        // --- Ensure all sections are shown and populated ---
-        // Show all sections
-        elements.filtersSection.classList.remove('hidden');
-        elements.resultsSection.classList.remove('hidden');
-        elements.marketShareSection.classList.remove('hidden');
-        elements.heatmapSection.classList.remove('hidden');
-        elements.marketShareTrendsSection.classList.remove('hidden');
-        
-        // Initialize heatmap visualization
-        updateHeatmap();
-        
-        // Make sure event listeners are attached to the radio buttons
-        attachHeatmapModeListeners();
-        
-        // Initialize Market Share section
-        if (state.processedData && state.processedData.premiumBands) {
-            populatePremiumBandSelect(state.processedData.premiumBands);
-        }
-        
-        // Initialize Market Share Trends section
-        resetMarketShareTrends();
-        
-        // Log the state of filters for debugging
-        console.log('Filters after processing data:', JSON.stringify(state.filters));
-        
-        // Ensure we have date range set
-        if (!state.filters.dateRange || !state.filters.dateRange[0] || !state.filters.dateRange[1]) {
-            console.warn('Date range not properly set in filters, setting defaults');
-            // Set default date range if not already set
-            if (state.processedData && state.processedData.months && state.processedData.months.length > 0) {
-                state.filters.dateRange = [
-                    state.processedData.months[0],
-                    state.processedData.months[state.processedData.months.length - 1]
-                ];
-                console.log('Set default date range:', state.filters.dateRange);
-            }
-        }
-        
-        showLoading(false);
-    } catch (error) {
-        showLoading(false);
-        showError(error.message);
-        console.error('Error processing data:', error);
+    showLoading(true);
+    
+    // Check if files are selected
+    const esisFile = elements.esisFileInput.files[0];
+    const swapFile = elements.swapFileInput.files[0];
+    
+    if (!esisFile || !swapFile) {
+        throw new Error('Please select both ESIS data and Swap Rates files');
     }
+    
+    // Reset market share filters when loading new data
+    state.marketShareFilters.selectedPremiumBands = [];
+    
+    // Parse ESIS data
+    state.esisData = await parseCSVFile(esisFile);
+    
+    // DEBUG: Log raw loan total immediately after parsing
+    const rawLoanTotal = state.esisData.reduce((sum, record) => sum + (parseFloat(record.Loan) || 0), 0);
+    console.log('DEBUG - Raw loan total from CSV:', rawLoanTotal.toLocaleString());
+    
+    // DEBUG: Log sample loan amounts from raw data
+    if (state.esisData.length > 0) {
+        console.log('DEBUG - Sample raw loan amounts from first 5 records:');
+        state.esisData.slice(0, 5).forEach((record, idx) => {
+            console.log(`Record ${idx}: Raw Loan=${record.Loan}, Type=${typeof record.Loan}`);
+        });
+    }
+    
+    // DEBUG: Check for duplicate records in raw data and deduplicate
+    const uniqueIds = new Set();
+    const uniqueRecords = [];
+    const duplicates = [];
+    
+    state.esisData.forEach(record => {
+        // Use id if available, otherwise create a composite key
+        const id = record.id || `${record.Provider}-${record.DocumentDate}-${record.Loan}`;
+        if (uniqueIds.has(id)) {
+            duplicates.push(record);
+        } else {
+            uniqueIds.add(id);
+            uniqueRecords.push(record);
+        }
+    });
+    
+    console.log('DEBUG - Number of potential duplicate records in raw data:', duplicates.length);
+    console.log('DEBUG - Number of unique records after deduplication:', uniqueRecords.length);
+    
+    // Replace the original data with deduplicated data
+    state.esisData = uniqueRecords;
+    
+    // Map field names first, so validateData can use standardized names
+    mapFieldNames(); 
+    
+    // Parse Swap Rates data (CSV or Excel)
+    if (swapFile.name.endsWith('.csv')) {
+        state.swapRatesData = await parseCSVFile(swapFile);
+    } else if (swapFile.name.endsWith('.xlsx')) {
+        const swapData = await parseExcelFile(swapFile);
+        console.log('Raw swapData from Excel:', swapData ? JSON.stringify(swapData.slice(0, 5)) : 'null'); // Log first 5 raw records
+        
+        state.swapRatesData = swapData
+            .map(row => {
+                // Attempt to parse the date. Robustly handle different possible date inputs if necessary.
+                // For now, assuming row.Date is in a format moment() can parse directly or is an Excel date serial number.
+                const effectiveDate = moment(row.Date); 
+                return {
+                    effective_at: effectiveDate.isValid() ? effectiveDate.toDate() : null, // Store as Date object
+                    product_term_in_months: parseInt(row['TieInPeriod'], 10),
+                    rate: parseFloat(row['Rate'])
+                };
+            })
+            .filter(rate => 
+                rate.effective_at instanceof Date && !isNaN(rate.effective_at.getTime()) && // Check for valid Date object
+                !isNaN(rate.product_term_in_months) && 
+                !isNaN(rate.rate)
+            ); // Filter out invalid rates more robustly
+        
+        console.log('Processed state.swapRatesData:', state.swapRatesData ? JSON.stringify(state.swapRatesData.slice(0, 5).map(r => ({...r, effective_at: r.effective_at ? r.effective_at.toISOString() : null }))) : 'null'); // Log with ISO dates
+        if (!state.swapRatesData || state.swapRatesData.length === 0) {
+            console.warn('state.swapRatesData is empty or null after processing. Check Excel sheet and parsing logic.');
+        }
+    } else {
+        throw new Error('Unsupported swap rates file format. Please use CSV or XLSX.');
+    }
+    
+    // Validate data (now after mapFieldNames)
+    validateData();
+    
+    // DEBUG: Simple verification total - sum all loans without any grouping
+    const simpleVerificationTotal = state.esisData.reduce((sum, record) => sum + (record.Loan || 0), 0);
+    console.log('DEBUG - Simple verification total (just summing all loans):', simpleVerificationTotal.toLocaleString());
+    
+    // Enrich state.esisData with PremiumBand and Month
+    state.esisData = enrichEsisData(state.esisData);
+    
+    // Initialize the premium band selector for market share trends
+    initializePremiumBandSelector();
+    
+    // Make sure the market share trends section is visible
+    if (elements.marketShareTrendsSection) {
+        elements.marketShareTrendsSection.classList.remove('hidden');
+    }
+    
+    // Log product type counts to verify both 2-year and 5-year products are present
+    const twoYearCount = state.esisData.filter(r => r.NormalizedTerm === 24).length;
+    const fiveYearCount = state.esisData.filter(r => r.NormalizedTerm === 60).length;
+    const totalCount = state.esisData.length;
+    const twoYearPercent = ((twoYearCount / totalCount) * 100).toFixed(2);
+    const fiveYearPercent = ((fiveYearCount / totalCount) * 100).toFixed(2);
+    
+    console.log('=== PRODUCT TYPE VERIFICATION ===');
+    console.log(`Total products processed: ${totalCount}`);
+    console.log(`2-year fixed products: ${twoYearCount} (${twoYearPercent}%)`);
+    console.log(`5-year fixed products: ${fiveYearCount} (${fiveYearPercent}%)`);
+    console.log(`Other term products: ${totalCount - twoYearCount - fiveYearCount} (${(100 - parseFloat(twoYearPercent) - parseFloat(fiveYearPercent)).toFixed(2)}%)`);
+    
+    // Warning if either product type is missing or significantly imbalanced
+    if (twoYearCount === 0 || fiveYearCount === 0) {
+        console.warn('WARNING: One or more product types are missing from the dataset!');
+    } else if (twoYearCount < 0.1 * totalCount || fiveYearCount < 0.1 * totalCount) {
+        console.warn('WARNING: Product type distribution is significantly imbalanced (one type < 10% of total).');
+    }
+    console.log('=================================');
+    
+    // DEBUG: Calculate total loan amount after enrichment
+    const postEnrichmentTotal = state.esisData.reduce((sum, record) => sum + (record.Loan || 0), 0);
+    console.log('DEBUG - Total loan amount after enrichment:', postEnrichmentTotal.toLocaleString());
+    
+    // Aggregate the enriched data for charts/processed views
+    state.processedData = aggregateByPremiumBandAndMonth(state.esisData);
+
+    // Store total market figures from the initial full dataset processing
+    if (state.processedData && state.processedData.totals) {
+        state.totalMarketByPremiumBand = { ...state.processedData.totals.byPremiumBand }; // Shallow copy
+        state.overallTotalMarket = state.processedData.totals.overall;
+        console.log('Initial Total Market by Premium Band:', JSON.stringify(state.totalMarketByPremiumBand));
+        console.log('Initial Overall Total Market:', state.overallTotalMarket.toLocaleString());
+        
+        // DEBUG: Compare with our simple verification total
+        console.log('DEBUG - Comparison of totals:', {
+            'Simple verification total': simpleVerificationTotal.toLocaleString(),
+            'Aggregated overall total': state.overallTotalMarket.toLocaleString(),
+            'Ratio (aggregated/simple)': (state.overallTotalMarket / simpleVerificationTotal).toFixed(2)
+        });
+    } else {
+        state.totalMarketByPremiumBand = {};
+        state.overallTotalMarket = 0;
+        console.warn('Could not set initial market totals, processedData or its totals are missing.');
+    }
+
+    // Update UI with results - always update filters first
+    updateFilters();
+    renderTable();
+
+    // --- Ensure all sections are shown and populated ---
+    // Show all sections
+    elements.filtersSection.classList.remove('hidden');
+    elements.resultsSection.classList.remove('hidden');
+    elements.marketShareSection.classList.remove('hidden');
+    elements.heatmapSection.classList.remove('hidden');
+    elements.marketShareTrendsSection.classList.remove('hidden');
+    
+    // Initialize heatmap visualization
+    updateHeatmap();
+    
+    // Make sure event listeners are attached to the radio buttons
+    attachHeatmapModeListeners();
+    
+    // Initialize Market Share section
+    if (state.processedData && state.processedData.premiumBands) {
+        populatePremiumBandSelect(state.processedData.premiumBands);
+    }
+    
+    // Initialize Market Share Trends section
+    resetMarketShareTrends();
+    
+    // Log the state of filters for debugging
+    console.log('Filters after processing data:', JSON.stringify(state.filters));
+    
+    // Ensure we have date range set
+    if (!state.filters.dateRange || !state.filters.dateRange[0] || !state.filters.dateRange[1]) {
+        console.warn('Date range not properly set in filters, setting defaults');
+        // Set default date range if not already set
+        if (state.processedData && state.processedData.months && state.processedData.months.length > 0) {
+            state.filters.dateRange = [
+                state.processedData.months[0],
+                state.processedData.months[state.processedData.months.length - 1]
+            ];
+            console.log('Set default date range:', state.filters.dateRange);
+        }
+    }
+    
+    // Hide loading indicator
+    showLoading(false);
+    
+    // Show success message
+    showSuccess('Data processed successfully!');
+    
+    return state.processedData;
 }
 
 // Helper function to enrich ESIS data records
@@ -715,12 +795,11 @@ function validateData() {
 }
 
 function mapFieldNames() {
-    try {
-        console.log('Mapping field names for', state.esisData.length, 'records');
-        
-        // DEBUG: Calculate total loan amount before mapping
-        const preMappingTotal = state.esisData.reduce((sum, record) => sum + (parseFloat(record.Loan) || 0), 0);
-        console.log('DEBUG - Total loan amount before field mapping:', preMappingTotal.toLocaleString());
+    console.log('Mapping field names for', state.esisData.length, 'records');
+    
+    // DEBUG: Calculate total loan amount before mapping
+    const preMappingTotal = state.esisData.reduce((sum, record) => sum + (parseFloat(record.Loan) || 0), 0);
+    console.log('DEBUG - Total loan amount before field mapping:', preMappingTotal.toLocaleString());
         
         // DEBUG: Analyze LTV distribution in the dataset
         let ltvData = {
@@ -800,11 +879,12 @@ function mapFieldNames() {
             }
 
             // 2. Derive Month (handle potential errors from new Date() if source is bad)
-            try {
+            // Try to extract the month, but handle potential errors gracefully
+            if (mappedRecord.DocumentDate instanceof Date && !isNaN(mappedRecord.DocumentDate)) {
                 mappedRecord.Month = extractMonth(mappedRecord.DocumentDate);
-            } catch (e) {
-                console.error(`Error extracting month for record ${index}:`, e, mappedRecord.DocumentDate);
-                mappedRecord.Month = null; 
+            } else {
+                console.error(`Error extracting month for record ${index}: Invalid date`, mappedRecord.DocumentDate);
+                mappedRecord.Month = null;
             }
 
             // Log for the first 3 records
@@ -885,10 +965,6 @@ function mapFieldNames() {
                 console.warn('No LTV data found in the dataset. Check field names or data quality.');
             }
         }
-    } catch (error) {
-        console.error('Error mapping field names:', error);
-        showError(`Error mapping field names: ${error.message}`);
-    }
 }
 
 function determinePurchaseType(record) {
@@ -1262,10 +1338,9 @@ function extractMonth(date) {
 }
 
 function aggregateByPremiumBandAndMonth(records) {
-    try {
-        // DEBUG: Calculate simple sum of all loans before aggregation
-        const preAggregationTotal = records.reduce((sum, record) => sum + (record.Loan || 0), 0);
-        console.log('DEBUG - Total loan amount before aggregation:', preAggregationTotal.toLocaleString());
+    // DEBUG: Calculate simple sum of all loans before aggregation
+    const preAggregationTotal = records.reduce((sum, record) => sum + (record.Loan || 0), 0);
+    console.log('DEBUG - Total loan amount before aggregation:', preAggregationTotal.toLocaleString());
         if (!records || !Array.isArray(records) || records.length === 0) {
             console.warn('No valid records to aggregate');
             return {
@@ -1286,15 +1361,24 @@ function aggregateByPremiumBandAndMonth(records) {
         
         // Get unique premium bands and months
         const premiumBands = [...new Set(records.map(r => r.PremiumBand).filter(Boolean))].sort((a, b) => {
-            try {
-                // Sort premium bands numerically
-                const aLower = parseInt(a.split('-')[0]);
-                const bLower = parseInt(b.split('-')[0]);
-                return aLower - bLower;
-            } catch (error) {
-                console.error('Error sorting premium bands:', error, a, b);
+            // Sort premium bands numerically, with error handling
+            const aParts = a.split('-');
+            const bParts = b.split('-');
+            
+            if (!aParts[0] || !bParts[0]) {
+                console.error('Invalid premium band format:', a, b);
                 return 0;
             }
+            
+            const aLower = parseInt(aParts[0]);
+            const bLower = parseInt(bParts[0]);
+            
+            if (isNaN(aLower) || isNaN(bLower)) {
+                console.error('Error parsing premium bands as numbers:', a, b);
+                return 0;
+            }
+            
+            return aLower - bLower;
         });
         
         const months = [...new Set(records.map(r => r.Month).filter(Boolean))].sort();
@@ -1393,19 +1477,6 @@ function aggregateByPremiumBandAndMonth(records) {
         });
         
         return aggregatedData;
-    } catch (error) {
-        console.error('Error aggregating data:', error);
-        return {
-            premiumBands: [],
-            months: [],
-            data: {},
-            totals: {
-                byPremiumBand: {},
-                byMonth: {},
-                overall: 0
-            }
-        };
-    }
 }
 
 // Table Rendering Functions
@@ -1417,15 +1488,14 @@ function renderTable() {
         elements.marketShareSection.classList.add('hidden');
     }
 
-    try {
-        // Check if we have processed data
-        const currentAggregatedData = state.processedData; // Use filtered or full data
+    // Check if we have processed data
+    const currentAggregatedData = state.processedData; // Use filtered or full data
 
-        if (!currentAggregatedData || !currentAggregatedData.months || currentAggregatedData.months.length === 0) {
-            console.warn('No data available for table rendering (currentAggregatedData missing or empty).');
-            elements.resultsTable.innerHTML = '<div class="empty-state">No data available. Please check your filters or try uploading different data files.</div>';
-            return;
-        }
+    if (!currentAggregatedData || !currentAggregatedData.months || currentAggregatedData.months.length === 0) {
+        console.warn('No data available for table rendering (currentAggregatedData missing or empty).');
+        elements.resultsTable.innerHTML = '<div class="empty-state">No data available. Please check your filters or try uploading different data files.</div>';
+        return;
+    }
         
         // Prepare table data
         const tableData = prepareTableData(currentAggregatedData);
@@ -1549,9 +1619,6 @@ function renderTable() {
                 }
             }
         });
-    } catch (error) {
-        console.error('Error rendering table:', error);
-        showError(`Error rendering table: ${error.message}`);
     }
 }
 
@@ -1687,19 +1754,18 @@ function prepareTableData(currentProcessedData) {
 
 // Filter Functions
 function updateFilters() {
-    try {
-        // Update date range options
-        const months = state.processedData.months;
-        if (months && months.length > 0) {
-            const startMonth = months[0];
-            const endMonth = months[months.length - 1];
-            
-            // Format dates for input[type="month"]
-            elements.dateStart.value = startMonth;
-            elements.dateEnd.value = endMonth;
-            
-            state.filters.dateRange = [startMonth, endMonth];
-        }
+    // Update date range options
+    const months = state.processedData.months;
+    if (months && months.length > 0) {
+        const startMonth = months[0];
+        const endMonth = months[months.length - 1];
+        
+        // Format dates for input[type="month"]
+        elements.dateStart.value = startMonth;
+        elements.dateEnd.value = endMonth;
+        
+        state.filters.dateRange = [startMonth, endMonth];
+    }
         
         // Set default premium range (even though it's not in the UI anymore)
         // This ensures the internal state is maintained for filtering
@@ -1806,33 +1872,28 @@ function updateFilters() {
             elements.purchaseType.appendChild(option);
         });
         
-        console.log('Filter options updated successfully:', {
+        console.log('Filter options updated:', {
             lenders: lenders.length,
             productTypes: productTypes.length,
             purchaseTypes: purchaseTypes.length
         });
-    } catch (error) {
-        console.error('Error updating filters:', error);
-        showError(`Error updating filters: ${error.message}`);
-    }
 }
 
 function applyFilters() {
-    try {
-        showLoading(true);
-        
-        // Get filter values - with null checks
-        const dateStart = elements.dateStart ? elements.dateStart.value : null;
-        const dateEnd = elements.dateEnd ? elements.dateEnd.value : null;
-        
-        // Store previous date range for comparison
-        const previousDateStart = state.filters.dateRange[0];
-        const previousDateEnd = state.filters.dateRange[1];
-        // Premium range filter removed from UI but maintained in state
-        const premiumMin = 0;
-        const premiumMax = 500;
-        // Get LTV filter value
-        const ltvRange = elements.ltvFilter ? elements.ltvFilter.value : 'all';
+    showLoading(true);
+    
+    // Get filter values - with null checks
+    const dateStart = elements.dateStart ? elements.dateStart.value : null;
+    const dateEnd = elements.dateEnd ? elements.dateEnd.value : null;
+    
+    // Store previous date range for comparison
+    const previousDateStart = state.filters.dateRange[0];
+    const previousDateEnd = state.filters.dateRange[1];
+    // Premium range filter removed from UI but maintained in state
+    const premiumMin = 0;
+    const premiumMax = 500;
+    // Get LTV filter value
+    const ltvRange = elements.ltvFilter ? elements.ltvFilter.value : 'all';
         
         // Add null checks to prevent errors if lenderFilter is not fully initialized
         const lenderOptions = elements.lenderFilter ? elements.getOptions(elements.lenderFilter) : [];
@@ -2022,11 +2083,6 @@ function applyFilters() {
         
         console.log('Filters applied successfully. Filtered data count:', state.filteredData.length);
         showLoading(false);
-    } catch (error) {
-        console.error('Error applying filters:', error);
-        showError(`Error applying filters: ${error.message}`);
-        showLoading(false);
-    }
 }
 
 // Break down filtering into separate functions
@@ -2138,31 +2194,25 @@ function filterData(data) {
     }
     
     return data.filter(record => {
-        try {
-            if (!record || typeof record !== 'object') return false;
-            
-            return dateRangeFilter(record, state.filters.dateRange) &&
-                   lenderFilter(record, state.filters.lenders) &&
-                   premiumRangeFilter(record, state.filters.premiumRange) &&
-                   productTypeFilter(record, state.filters.productTypes) &&
-                   purchaseTypeFilter(record, state.filters.purchaseTypes) &&
-                   ltvRangeFilter(record, state.filters.ltvRange, state.ltvFilterStats);
-        } catch (error) {
-            console.error('Error filtering record:', error, record);
-            return false;
-        }
+        if (!record || typeof record !== 'object') return false;
+        
+        return dateRangeFilter(record, state.filters.dateRange) &&
+               lenderFilter(record, state.filters.lenders) &&
+               premiumRangeFilter(record, state.filters.premiumRange) &&
+               productTypeFilter(record, state.filters.productTypes) &&
+               purchaseTypeFilter(record, state.filters.purchaseTypes) &&
+               ltvRangeFilter(record, state.filters.ltvRange, state.ltvFilterStats);
     });
 }
 
 function resetFilters() {
-    try {
-        showLoading(true);
-        
-        // Reset filter controls
-        if (state.processedData && state.processedData.months && state.processedData.months.length > 0) {
-            elements.dateStart.value = state.processedData.months[0];
-            elements.dateEnd.value = state.processedData.months[state.processedData.months.length - 1];
-        }
+    showLoading(true);
+    
+    // Reset filter controls
+    if (state.processedData && state.processedData.months && state.processedData.months.length > 0) {
+        elements.dateStart.value = state.processedData.months[0];
+        elements.dateEnd.value = state.processedData.months[state.processedData.months.length - 1];
+    }
         
         // Store previous date range for comparison
         const previousDateStart = state.filters.dateRange[0];
@@ -2215,11 +2265,6 @@ function resetFilters() {
         
         console.log('Filters reset successfully');
         showLoading(false);
-    } catch (error) {
-        console.error('Error resetting filters:', error);
-        showError(`Error resetting filters: ${error.message}`);
-        showLoading(false);
-    }
 }
 
 // --- MARKET SHARE: Populate premium band chips ---
@@ -2349,84 +2394,6 @@ function resetMarketShareTrends() {
 
 // --- MARKET SHARE: Aggregate data by lender and premium band ---
 function aggregateLenderMarketShare(selectedBands) {
-    // Use the currently filtered data but remove any lender filter
-    // This ensures the market share analysis respects all other filters
-    function removeOnlyLenderFilter(data) {
-        if (!data || !Array.isArray(data)) {
-            console.error('Invalid data provided to removeOnlyLenderFilter:', data);
-            return [];
-        }
-        
-        // If no lender filter is applied, just return the data as is
-        if (!state.filters.lenders || state.filters.lenders.length === 0) {
-            return data;
-        }
-        
-        // Otherwise, we need to re-filter the original data with all filters except lender
-        return state.esisData.filter(record => {
-            try {
-                // Skip invalid records
-                if (!record || typeof record !== 'object') {
-                    return false;
-                }
-                
-                // Filter by date range
-                if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
-                    if (!record.DocumentDate || !record.Month) { 
-                        return false;
-                    }
-                    const recordMonth = record.Month; 
-                    if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
-                        return false;
-                    }
-                }
-                
-                // Filter by product type
-                if (state.filters.productTypes.length > 0) {
-                    if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
-                        return false;
-                    }
-                }
-                
-                // Filter by purchase type
-                if (state.filters.purchaseTypes.length > 0) {
-                    if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
-                        return false;
-                    }
-                }
-                
-                // Filter by LTV range
-                if (state.filters.ltvRange !== 'all') {
-                    // Use our standardized LTV field from mapping
-                    let ltv = record.StandardizedLTV;
-                    
-                    // If LTV is available, filter by it
-                    if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
-                        if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
-                            return false;
-                        } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
-                            return false;
-                        }
-                    }
-                }
-                
-                // Apply product term filter
-                if (document.getElementById('product-term-filter').value !== 'all') {
-                    const termFilterResult = getDataByProductTerm([record], document.getElementById('product-term-filter').value);
-                    if (termFilterResult.length === 0) {
-                        return false;
-                    }
-                }
-                
-                // Ignore lender filter - include all lenders
-                return true;
-            } catch (error) {
-                console.error('Error in removeOnlyLenderFilter:', error, record);
-                return false;
-            }
-        });
-    }
-    
     // Temporarily adjust premium range to include 500-520 band if it's selected
     const originalPremiumRange = [...state.filters.premiumRange];
     
@@ -2436,22 +2403,9 @@ function aggregateLenderMarketShare(selectedBands) {
         state.filters.premiumRange[1] = 520;
     }
     
-    // Get data with all filters except lender filter (safely)
-    let filtered = [];
-    if (state.filteredData && Array.isArray(state.filteredData)) {
-        filtered = removeOnlyLenderFilter(state.filteredData);
-        console.log(`Market Share Analysis: Using ${filtered.length} records (respecting all filters except lender)`);
-    } else {
-        // Fallback to using all ESIS data if filtered data is not available
-        console.log('Market Share Analysis: Filtered data not available, using all ESIS data');
-        if (state.esisData && Array.isArray(state.esisData)) {
-            filtered = removeOnlyLenderFilter(state.esisData);
-            console.log(`Market Share Analysis: Using ${filtered.length} records from all ESIS data`);
-        } else {
-            console.error('Market Share Analysis: No valid data available');
-            filtered = [];
-        }
-    }
+    // Get filtered data without lender filter using our common function
+    let filtered = getDataWithoutLenderFilter();
+    console.log(`Market Share Analysis: Using ${filtered.length} records (respecting all filters except lender)`);
     
     // Restore original premium range
     state.filters.premiumRange = originalPremiumRange;
@@ -2719,66 +2673,61 @@ function updateMarketShareTable() {
     
     // Create a custom filtered dataset that respects all filters EXCEPT lender filter
     const data = state.esisData.filter(record => {
-        try {
-            // Skip invalid records
-            if (!record || typeof record !== 'object') {
-                return false;
-            }
-            
-            // Filter by date range
-            if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
-                if (!record.DocumentDate || !record.Month) { 
-                    return false;
-                }
-                const recordMonth = record.Month; 
-                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
-                    return false;
-                }
-            }
-            
-            // Filter by product type
-            if (state.filters.productTypes.length > 0) {
-                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by purchase type
-            if (state.filters.purchaseTypes.length > 0) {
-                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by LTV range
-            if (state.filters.ltvRange !== 'all') {
-                // Use our standardized LTV field from mapping
-                let ltv = record.StandardizedLTV;
-                
-                // If LTV is available, filter by it
-                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
-                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
-                        return false;
-                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
-                        return false;
-                    }
-                }
-            }
-            
-            // Apply product term filter
-            if (document.getElementById('product-term-filter').value !== 'all') {
-                const termFilterResult = getDataByProductTerm([record], document.getElementById('product-term-filter').value);
-                if (termFilterResult.length === 0) {
-                    return false;
-                }
-            }
-            
-            // Ignore lender filter - include all lenders
-            return true;
-        } catch (error) {
-            console.error('Error in market share filtering:', error, record);
+        // Skip invalid records
+        if (!record || typeof record !== 'object') {
             return false;
         }
+        
+        // Filter by date range
+        if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
+            if (!record.DocumentDate || !record.Month) { 
+                return false;
+            }
+            const recordMonth = record.Month; 
+            if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
+                return false;
+            }
+        }
+        
+        // Filter by product type
+        if (state.filters.productTypes.length > 0) {
+            if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
+                return false;
+            }
+        }
+        
+        // Filter by purchase type
+        if (state.filters.purchaseTypes.length > 0) {
+            if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
+                return false;
+            }
+        }
+        
+        // Filter by LTV range
+        if (state.filters.ltvRange !== 'all') {
+            // Use our standardized LTV field from mapping
+            let ltv = record.StandardizedLTV;
+            
+            // If LTV is available, filter by it
+            if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+                if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
+                    return false;
+                } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                    return false;
+                }
+            }
+        }
+        
+        // Apply product term filter
+        if (document.getElementById('product-term-filter').value !== 'all') {
+            const termFilterResult = getDataByProductTerm([record], document.getElementById('product-term-filter').value);
+            if (termFilterResult.length === 0) {
+                return false;
+            }
+        }
+        
+        // Ignore lender filter - include all lenders
+        return true;
     });
     
     console.log(`Market Share Analysis: Using ${data.length} records (respecting all filters except lender)`);
@@ -3561,103 +3510,150 @@ function formatCurrency(value) {
     return `£${Number(valueInMillions).toLocaleString()}m`;
 }
 
-// --- HEATMAP: Helper function to get data without lender filter ---
-function getHeatmapData() {
+/**
+ * Returns data filtered by all criteria EXCEPT lender filter
+ * Used by both market share analysis and heatmap visualization
+ * @returns {Array} - Filtered data that matches all criteria except lender filter
+ */
+function getDataWithoutLenderFilter() {
     // If no lender filter is applied, just use the current filtered data
     if (!state.filters.lenders || state.filters.lenders.length === 0) {
         return state.filteredData || [];
     }
     
-    // Otherwise, we need to re-filter the original data with all filters except lender
-    console.log('Removing lender filter for heatmap visualization');
-    return state.esisData.filter(record => {
-        try {
-            // Skip invalid records
-            if (!record || typeof record !== 'object') {
-                return false;
-            }
-            
-            // Filter by date range
-            if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
-                if (!record.DocumentDate || !record.Month) { 
-                    return false;
-                }
-                const recordMonth = record.Month; 
-                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
-                    return false;
-                }
-            }
-            
-            // Filter by product type
-            if (state.filters.productTypes.length > 0) {
-                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by purchase type
-            if (state.filters.purchaseTypes.length > 0) {
-                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by LTV range
-            if (state.filters.ltvRange !== 'all') {
-                // Use our standardized LTV field from mapping
-                let ltv = record.StandardizedLTV;
-                
-                // If LTV is available, filter by it
-                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
-                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
-                        return false;
-                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
-                        return false;
-                    }
-                }
-            }
-            
-            // Apply product term filter
-            // Get product term filter with null check
-            const productTermFilter = document.getElementById('product-term-filter');
-            const productTermValue = productTermFilter ? productTermFilter.value : 'all';
-            
-            if (productTermValue !== 'all') {
-                const termFilterResult = getDataByProductTerm([record], productTermValue);
-                if (termFilterResult.length === 0) {
-                    return false;
-                }
-            }
-            
-            // Ignore lender filter - include all lenders
-            return true;
-        } catch (error) {
-            console.error('Error in getHeatmapData:', error, record);
+    // Get the product term filter value once, outside the loop
+    const productTermFilter = document.getElementById('product-term-filter');
+    const productTermValue = productTermFilter ? productTermFilter.value : 'all';
+    
+    // Create a cache key based on current non-lender filters
+    const cacheKey = JSON.stringify({
+        dateRange: state.filters.dateRange,
+        premiumRange: state.filters.premiumRange,
+        productTypes: state.filters.productTypes,
+        purchaseTypes: state.filters.purchaseTypes,
+        ltvRange: state.filters.ltvRange,
+        productTerm: productTermValue
+    });
+    
+    // Use cached results if available and filters haven't changed
+    if (state.filterCache && state.filterCache.key === cacheKey) {
+        console.log('Using cached filtered data');
+        return state.filterCache.data;
+    }
+    
+    // Otherwise, re-filter the original data with all filters except lender
+    const filtered = state.esisData.filter(record => {
+        // Skip invalid records
+        if (!record || typeof record !== 'object') {
             return false;
         }
+        
+        // Filter by date range
+        if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
+            if (!record.Month) { 
+                return false;
+            }
+            const recordMonth = record.Month; 
+            if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
+                return false;
+            }
+        }
+        
+        // Apply premium range filter - THIS IS THE MISSING FILTER BEING ADDED
+        if (state.filters.premiumRange && record.PremiumOverSwap !== null && record.PremiumOverSwap !== undefined) {
+            const [min, max] = state.filters.premiumRange;
+            if (record.PremiumOverSwap < min || record.PremiumOverSwap > max) {
+                return false;
+            }
+        } else if (state.filters.premiumRange && record.PremiumBand) {
+            // Handle records with PremiumBand but no PremiumOverSwap
+            const [filterMin, filterMax] = state.filters.premiumRange;
+            // Extract the bounds of the premium band (e.g., '60-80' -> [60, 80])
+            const bandBounds = record.PremiumBand.split('-').map(Number);
+            const bandMin = bandBounds[0];
+            const bandMax = bandBounds[1] || bandBounds[0]; // Handle single value bands
+            
+            // Check if there's any overlap between the band and filter range
+            if (bandMin > filterMax || bandMax < filterMin) {
+                return false;
+            }
+        }
+        
+        // Filter by product type
+        if (state.filters.productTypes.length > 0) {
+            if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
+                return false;
+            }
+        }
+        
+        // Filter by purchase type
+        if (state.filters.purchaseTypes.length > 0) {
+            if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
+                return false;
+            }
+        }
+        
+        // Filter by LTV range
+        if (state.filters.ltvRange !== 'all') {
+            // Use standardized LTV field from mapping
+            let ltv = record.StandardizedLTV;
+            
+            // If LTV is available, filter by it
+            if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+                if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
+                    return false;
+                } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                    return false;
+                }
+            }
+        }
+        
+        // Apply product term filter - USING THE VALUE OBTAINED OUTSIDE THE LOOP
+        if (productTermValue !== 'all') {
+            const termFilterResult = getDataByProductTerm([record], productTermValue);
+            if (termFilterResult.length === 0) {
+                return false;
+            }
+        }
+        
+        // Include all lenders (no lender filter)
+        return true;
     });
+    
+    // Cache the results
+    state.filterCache = {
+        key: cacheKey,
+        data: filtered
+    };
+    
+    return filtered;
+}
+
+// --- HEATMAP: Helper function to get data without lender filter ---
+function getHeatmapData() {
+    console.log('Removing lender filter for heatmap visualization');
+    return getDataWithoutLenderFilter();
 }
 
 // --- HEATMAP: Update Function ---
 function updateHeatmap() {
-    try {
-        console.log('Updating heatmap visualization...');
-        
-        // Ensure the heatmap visualization element exists
-        const heatmapVisualization = document.getElementById('heatmap-visualization');
-        if (!heatmapVisualization) {
-            console.warn('Heatmap visualization element not found, attempting to recreate it');
-            ensureHeatmapElementsExist();
-            // Try to get the element again after creating it
-            const newHeatmapVisualization = document.getElementById('heatmap-visualization');
-            if (!newHeatmapVisualization) {
-                console.error('Failed to create heatmap visualization element');
-                return;
-            }
-            newHeatmapVisualization.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Generating heatmap...</p></div>';
-        } else {
-            heatmapVisualization.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Generating heatmap...</p></div>';
+    console.log('Updating heatmap visualization...');
+    
+    // Ensure the heatmap visualization element exists
+    const heatmapVisualization = document.getElementById('heatmap-visualization');
+    if (!heatmapVisualization) {
+        console.warn('Heatmap visualization element not found, attempting to recreate it');
+        ensureHeatmapElementsExist();
+        // Try to get the element again after creating it
+        const newHeatmapVisualization = document.getElementById('heatmap-visualization');
+        if (!newHeatmapVisualization) {
+            console.error('Failed to create heatmap visualization element');
+            return;
         }
+        newHeatmapVisualization.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Generating heatmap...</p></div>';
+    } else {
+        heatmapVisualization.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Generating heatmap...</p></div>';
+    }
         
         // Get filtered data without lender filter
         const filteredData = getHeatmapData();
@@ -3705,40 +3701,32 @@ function updateHeatmap() {
             
             console.log('Heatmap updated successfully');
         }, 10);
-    } catch (error) {
-        console.error('Error updating heatmap:', error);
-        const vizElement = document.getElementById('heatmap-visualization');
-        if (vizElement) {
-            vizElement.innerHTML = '<p class="error">Error generating heatmap visualization: ' + error.message + '</p>';
-        }
-    }
 }
 
 // Function to update the heatmap without resetting it, using current filters
 function updateHeatmapWithCurrentFilters() {
-    try {
-        console.log('Updating heatmap with current filters...');
-        
-        // Ensure the heatmap visualization element exists
-        const vizElement = document.getElementById('heatmap-visualization');
-        if (!vizElement) {
-            console.warn('Heatmap visualization element not found, attempting to recreate it');
-            ensureHeatmapElementsExist();
-            // Try to get the element again after creating it
-            const newVizElement = document.getElementById('heatmap-visualization');
-            if (!newVizElement) {
-                console.error('Failed to create heatmap visualization element');
-                return;
-            }
-            newVizElement.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Generating heatmap...</p></div>';
-        } else {
-            // Show loading indicator but preserve the current state
-            const currentState = vizElement.innerHTML;
-            vizElement.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Updating heatmap...</p></div>';
-            
-            // Store the current state to restore if there's an error
-            vizElement.dataset.previousState = currentState;
+    console.log('Updating heatmap with current filters...');
+    
+    // Ensure the heatmap visualization element exists
+    const vizElement = document.getElementById('heatmap-visualization');
+    if (!vizElement) {
+        console.warn('Heatmap visualization element not found, attempting to recreate it');
+        ensureHeatmapElementsExist();
+        // Try to get the element again after creating it
+        const newVizElement = document.getElementById('heatmap-visualization');
+        if (!newVizElement) {
+            console.error('Failed to create heatmap visualization element');
+            return;
         }
+        newVizElement.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Generating heatmap...</p></div>';
+    } else {
+        // Show loading indicator but preserve the current state
+        const currentState = vizElement.innerHTML;
+        vizElement.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Updating heatmap...</p></div>';
+        
+        // Store the current state to restore if there's an error
+        vizElement.dataset.previousState = currentState;
+    }
         
         // Get filtered data without lender filter
         const filteredData = getHeatmapData();
@@ -3770,59 +3758,34 @@ function updateHeatmapWithCurrentFilters() {
         
         // Use setTimeout to allow the loading indicator to render before processing data
         setTimeout(() => {
-            try {
-                // Prepare data for the heatmap
-                const heatmapData = prepareHeatmapData(filteredData);
-                
-                // Get current visualization mode with fallback
-                const modeElement = document.querySelector('input[name="heatmap-mode"]:checked');
-                const mode = modeElement ? modeElement.value : 'lender'; // Default to lender mode if not found
-                console.log('Current heatmap mode:', mode);
-                
-                // Get current sort parameters if they exist
-                let sortBy = null;
-                let sortDirection = 'desc';
-                
-                // Check if we have any sorted columns
-                const sortedHeader = document.querySelector('.heatmap-table th.sorted');
-                if (sortedHeader) {
-                    sortBy = sortedHeader.textContent;
-                    sortDirection = sortedHeader.classList.contains('asc') ? 'asc' : 'desc';
-                    console.log(`Preserving sort: ${sortBy} (${sortDirection})`);
-                }
-                
-                // Render the heatmap with preserved sort parameters
-                renderHeatmap(heatmapData, mode, sortBy, sortDirection);
-                
-                // Re-attach event listeners to radio buttons
-                attachHeatmapModeListeners();
-                
-                console.log('Heatmap updated successfully with current filters');
-            } catch (innerError) {
-                console.error('Error in heatmap update timeout:', innerError);
-                // Try to restore previous state if available
-                const vizElement = document.getElementById('heatmap-visualization');
-                if (vizElement && vizElement.dataset.previousState) {
-                    vizElement.innerHTML = vizElement.dataset.previousState;
-                    console.log('Restored previous heatmap state after error');
-                } else if (vizElement) {
-                    vizElement.innerHTML = '<p class="error">Error updating heatmap: ' + innerError.message + '</p>';
-                }
+            // Prepare data for the heatmap
+            const heatmapData = prepareHeatmapData(filteredData);
+            
+            // Get current visualization mode with fallback
+            const modeElement = document.querySelector('input[name="heatmap-mode"]:checked');
+            const mode = modeElement ? modeElement.value : 'lender'; // Default to lender mode if not found
+            console.log('Current heatmap mode:', mode);
+            
+            // Get current sort parameters if they exist
+            let sortBy = null;
+            let sortDirection = 'desc';
+            
+            // Check if we have any sorted columns
+            const sortedHeader = document.querySelector('.heatmap-table th.sorted');
+            if (sortedHeader) {
+                sortBy = sortedHeader.textContent;
+                sortDirection = sortedHeader.classList.contains('asc') ? 'asc' : 'desc';
+                console.log(`Preserving sort: ${sortBy} (${sortDirection})`);
             }
+            
+            // Render the heatmap with preserved sort parameters
+            renderHeatmap(heatmapData, mode, sortBy, sortDirection);
+            
+            // Re-attach event listeners to radio buttons
+            attachHeatmapModeListeners();
+            
+            console.log('Heatmap updated successfully with current filters');
         }, 10);
-    } catch (error) {
-        console.error('Error updating heatmap with current filters:', error);
-        const vizElement = document.getElementById('heatmap-visualization');
-        if (vizElement) {
-            // Try to restore previous state if available
-            if (vizElement.dataset.previousState) {
-                vizElement.innerHTML = vizElement.dataset.previousState;
-                console.log('Restored previous heatmap state after error');
-            } else {
-                vizElement.innerHTML = '<p class="error">Error updating heatmap: ' + error.message + '</p>';
-            }
-        }
-    }
 }
 
 // Function to attach event listeners to heatmap mode radio buttons
@@ -4191,131 +4154,130 @@ function updateMarketShareTrendsChart() {
     
     // Process in next tick to allow UI to update
     setTimeout(() => {
-        try {
-            // Get selected premium bands specifically from the trends container
-            const selectedBands = [];
-            const chips = document.querySelectorAll('#trends-premium-bands-container .premium-band-chip.selected');
-            chips.forEach(chip => {
+        // Get selected premium bands specifically from the trends container
+        const selectedBands = [];
+        const chips = document.querySelectorAll('#trends-premium-bands-container .premium-band-chip.selected');
+        chips.forEach(chip => {
+            const band = chip.getAttribute('data-band');
+            if (band) selectedBands.push(band);
+        });
+        
+        // If no bands are selected, select all bands by default
+        if (selectedBands.length === 0) {
+            console.log('No premium bands selected for trends chart, defaulting to all bands');
+            document.querySelectorAll('#trends-premium-bands-container .premium-band-chip').forEach(chip => {
+                chip.classList.add('selected');
                 const band = chip.getAttribute('data-band');
                 if (band) selectedBands.push(band);
             });
+            updateSelectedBandsCount();
+        }
+        
+        // Save the selected bands in the trends-specific state
+        if (!state.marketShareTrends) {
+            state.marketShareTrends = {};
+        }
+        state.marketShareTrends.selectedPremiumBands = [...selectedBands];
+        
+        console.log('Market Share Trends using bands:', state.marketShareTrends.selectedPremiumBands);
+        
+        console.log('Using date range filter:', state.filters.dateRange);
+        
+        // Get data filtered by the main date range filter, LTV filter, and premium bands (but NOT by lender filter)
+        const filteredByDate = state.esisData.filter(record => {
+            // Skip records with invalid dates
+            if (!record.Month) return false;
             
-            // If no bands are selected, select all bands by default
-            if (selectedBands.length === 0) {
-                console.log('No premium bands selected for trends chart, defaulting to all bands');
-                document.querySelectorAll('#trends-premium-bands-container .premium-band-chip').forEach(chip => {
-                    chip.classList.add('selected');
-                    const band = chip.getAttribute('data-band');
-                    if (band) selectedBands.push(band);
-                });
-                updateSelectedBandsCount();
-            }
+            // Apply date range filter
+            const inDateRange = !state.filters.dateRange || 
+                (record.Month >= state.filters.dateRange[0] && 
+                 record.Month <= state.filters.dateRange[1]);
             
-            // Save the selected bands in the trends-specific state
-            if (!state.marketShareTrends) {
-                state.marketShareTrends = {};
-            }
-            state.marketShareTrends.selectedPremiumBands = [...selectedBands];
+            // Apply premium band filter
+            const inSelectedBands = selectedBands.length === 0 || selectedBands.includes(record.PremiumBand);
             
-            console.log('Market Share Trends using bands:', state.marketShareTrends.selectedPremiumBands);
-            
-            console.log('Using date range filter:', state.filters.dateRange);
-            
-            // Get data filtered by the main date range filter, LTV filter, and premium bands (but NOT by lender filter)
-            const filteredByDate = state.esisData.filter(record => {
-                // Skip records with invalid dates
-                if (!record.Month) return false;
-                
-                // Apply date range filter
-                const inDateRange = !state.filters.dateRange || 
-                    (record.Month >= state.filters.dateRange[0] && 
-                     record.Month <= state.filters.dateRange[1]);
-                
-                // Apply premium band filter
-                const inSelectedBands = selectedBands.length === 0 || selectedBands.includes(record.PremiumBand);
-                
-                // Apply LTV filter
-                let ltvFilterPassed = true;
-                if (state.filters.ltvRange && state.filters.ltvRange !== 'all') {
-                    const ltv = parseFloat(record.LTV);
-                    if (!isNaN(ltv)) {
-                        if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
-                            ltvFilterPassed = false;
-                        } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
-                            ltvFilterPassed = false;
-                        }
+            // Apply LTV filter
+            let ltvFilterPassed = true;
+            if (state.filters.ltvRange && state.filters.ltvRange !== 'all') {
+                const ltv = parseFloat(record.LTV);
+                if (!isNaN(ltv)) {
+                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
+                        ltvFilterPassed = false;
+                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                        ltvFilterPassed = false;
                     }
                 }
-                
-                return inDateRange && inSelectedBands && ltvFilterPassed;
-            });
-            
-            if (filteredByDate.length === 0) {
-                throw new Error('No data matches the selected filters. Please adjust your date range or premium band selection.');
             }
             
-            // Continue processing with filtered data
-            processMarketShareTrendsData(filteredByDate, selectedBands);
-            
-        } catch (error) {
-            console.error('Error updating market share trends chart:', error);
+            return inDateRange && inSelectedBands && ltvFilterPassed;
+        });
+        
+        if (filteredByDate.length === 0) {
             if (elements.marketShareTrendsChart) {
                 elements.marketShareTrendsChart.innerHTML = 
                     `<div class="no-data-message error-message">
                         <h3>Error</h3>
-                        <p>${error.message}</p>
+                        <p>No data matches the selected filters. Please adjust your date range or premium band selection.</p>
                         <button class="btn btn-primary mt-2" onclick="updateMarketShareTrendsChart()">
                             Try Again
                         </button>
                     </div>`;
             }
+            return;
         }
+        
+        // Continue processing with filtered data
+        processMarketShareTrendsData(filteredByDate, selectedBands);
     }, 10);
 }
 
 // Process data for the market share trends chart
 function processMarketShareTrendsData(filteredData, selectedBands) {
-    try {
-        console.log(`Processing ${filteredData.length} records for trends chart with ${selectedBands.length} selected bands`);
-        
-        // Filter by selected premium bands
-        const filteredByBands = filteredData.filter(record => {
-            return selectedBands.includes(record.PremiumBand);
-        });
-        
-        if (filteredByBands.length === 0) {
-            throw new Error('No data matches the selected premium bands. Please select different bands.');
-        }
-        
-        console.log(`Found ${filteredByBands.length} records matching selected premium bands`);
-        
-        // Group data by month and lender for the chart
-        const monthlyData = groupByMonthAndLender(filteredByBands);
-        
-        // Find lenders who were in the top 5 by market share at any point
-        const topLenders = findTopLenders(monthlyData, 5);
-        
-        if (topLenders.length === 0) {
-            throw new Error('No lenders found with market share in the selected data.');
-        }
-        
-        console.log(`Found ${topLenders.length} top lenders for the trends chart`);
-        
-        // Render the chart with only the top lenders
-        renderTrendsChart(monthlyData, topLenders);
-        
-        console.log('Market share trends chart updated successfully');
-    } catch (error) {
-        console.error('Error updating market share trends chart:', error);
+    console.log(`Processing ${filteredData.length} records for trends chart with ${selectedBands.length} selected bands`);
+    
+    // Filter by selected premium bands
+    const filteredByBands = filteredData.filter(record => {
+        return selectedBands.includes(record.PremiumBand);
+    });
+    
+    if (filteredByBands.length === 0) {
         if (elements.marketShareTrendsChart) {
             elements.marketShareTrendsChart.innerHTML = 
                 `<div class="no-data-message error-message">
                     <h3>Error</h3>
-                    <p>${error.message}</p>
+                    <p>No data matches the selected premium bands. Please select different bands.</p>
                     <button class="retry-btn" onclick="updateMarketShareTrendsChart()">Retry</button>
                 </div>`;
         }
+        return;
     }
+    
+    console.log(`Found ${filteredByBands.length} records matching selected premium bands`);
+    
+    // Group data by month and lender for the chart
+    const monthlyData = groupByMonthAndLender(filteredByBands);
+    
+    // Find lenders who were in the top 5 by market share at any point
+    const topLenders = findTopLenders(monthlyData, 5);
+    
+    if (topLenders.length === 0) {
+        if (elements.marketShareTrendsChart) {
+            elements.marketShareTrendsChart.innerHTML = 
+                `<div class="no-data-message error-message">
+                    <h3>Error</h3>
+                    <p>No lenders found with market share in the selected data.</p>
+                    <button class="retry-btn" onclick="updateMarketShareTrendsChart()">Retry</button>
+                </div>`;
+        }
+        return;
+    }
+    
+    console.log(`Found ${topLenders.length} top lenders for the trends chart`);
+    
+    // Render the chart with only the top lenders
+    renderTrendsChart(monthlyData, topLenders);
+    
+    console.log('Market share trends chart updated successfully');
 }
 
 // Group data by month and lender for the trends chart
@@ -4469,13 +4431,12 @@ function findTopLenders(monthlyData, maxLenders = 5) {
 
 // Render the market share trends chart
 function renderTrendsChart(monthlyData, lenders) {
-    try {
-        console.log('Rendering trends chart...');
-        
-        // Make sure we have the chart container
-        if (!elements.marketShareTrendsChart) {
-            elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
-        }
+    console.log('Rendering trends chart...');
+    
+    // Make sure we have the chart container
+    if (!elements.marketShareTrendsChart) {
+        elements.marketShareTrendsChart = document.getElementById('market-share-trends-chart');
+    }
         
         if (!elements.marketShareTrendsChart) {
             console.error('Market share trends chart container not found');
@@ -4567,11 +4528,13 @@ function renderTrendsChart(monthlyData, lenders) {
         chartConfig.data.monthKeys = monthlyData.months;
         chartConfig.data.lenderData = lenderData;
         
+        // Attempt to create the chart
         try {
-            // Attempt to create the chart
             new Chart(ctx, chartConfig);
             console.log('Chart rendered successfully with', lenders.length, 'top lenders');
         } catch (chartError) {
+            // This try-catch block is kept because it's handling a specific Chart.js error with a fallback UI
+            // and is not redundant with our general error handling wrapper
             console.error('Error creating Chart.js chart:', chartError);
             
             // Fallback to tabular representation
@@ -4585,17 +4548,6 @@ function renderTrendsChart(monthlyData, lenders) {
             warningDiv.textContent = 'Chart rendering failed. Displaying data in tabular format instead.';
             elements.marketShareTrendsChart.insertBefore(warningDiv, fallbackTable);
         }
-    } catch (error) {
-        console.error('Error in renderTrendsChart:', error);
-        if (elements.marketShareTrendsChart) {
-            elements.marketShareTrendsChart.innerHTML = 
-                `<div class="no-data-message error-message">
-                    <h3>Chart Rendering Error</h3>
-                    <p>${error.message}</p>
-                    <button class="retry-btn" onclick="updateMarketShareTrendsChart()">Retry</button>
-                </div>`;
-        }
-    }
 }
 
 // Create a fallback table for when chart rendering fails
@@ -4653,129 +4605,127 @@ function createFallbackTable(monthlyData, lenders) {
 
 // Export trends data as CSV
 function exportTrendsData() {
-    try {
-        // Validate state.esisData exists
-        if (!state.esisData || !Array.isArray(state.esisData) || state.esisData.length === 0) {
-            showError('No data available. Please upload and analyze data files first.');
-            return;
-        }
-        
-        // Get selected premium bands
-        const selectedBands = [];
-        const chips = document.querySelectorAll('.premium-band-chip.selected');
-        chips.forEach(chip => {
+    // Validate state.esisData exists
+    if (!state.esisData || !Array.isArray(state.esisData) || state.esisData.length === 0) {
+        showError('No data available. Please upload and analyze data files first.');
+        return;
+    }
+    
+    // Get selected premium bands
+    const selectedBands = [];
+    const chips = document.querySelectorAll('.premium-band-chip.selected');
+    chips.forEach(chip => {
+        const band = chip.getAttribute('data-band');
+        if (band) selectedBands.push(band);
+    });
+    
+    // If no bands are selected, select all bands by default
+    if (selectedBands.length === 0) {
+        console.log('No premium bands selected, defaulting to all bands');
+        document.querySelectorAll('.premium-band-chip').forEach(chip => {
+            chip.classList.add('selected');
             const band = chip.getAttribute('data-band');
             if (band) selectedBands.push(band);
         });
+        updateSelectedBandsCount();
+    }
+    
+    // Validate date filters
+    // Note: state.filters.dateRange stores dates in 'YYYY-MM' format strings, not Date objects
+    if (!state.filters.dateRange || !state.filters.dateRange[0] || !state.filters.dateRange[1]) {
+        showError('Invalid date range. Please set a valid date range in the filters.');
+        return;
+    }
+    
+    // Show loading indicator
+    const originalContent = elements.marketShareTrendsChart.innerHTML;
+    elements.marketShareTrendsChart.innerHTML = 
+        '<div class="no-data-message"><div class="spinner"></div>Preparing export data...</div>';
+    
+    setTimeout(() => {
+        // Get data filtered by the main date range filter
+        const filteredByDate = state.esisData.filter(record => {
+            // Skip records with invalid dates
+            if (!record.Month) return false;
+            
+            // Filter by month string (YYYY-MM format)
+            return record.Month >= state.filters.dateRange[0] && record.Month <= state.filters.dateRange[1];
+        });
         
-        // If no bands are selected, select all bands by default
-        if (selectedBands.length === 0) {
-            console.log('No premium bands selected, defaulting to all bands');
-            document.querySelectorAll('.premium-band-chip').forEach(chip => {
-                chip.classList.add('selected');
-                const band = chip.getAttribute('data-band');
-                if (band) selectedBands.push(band);
-            });
-            updateSelectedBandsCount();
-        }
-        
-        // Validate date filters
-        if (!state.filters.startDate || !state.filters.endDate) {
-            showError('Invalid date range. Please set a valid date range in the filters.');
+        if (filteredByDate.length === 0) {
+            // Restore original chart content
+            elements.marketShareTrendsChart.innerHTML = originalContent;
+            showError('No data available for the selected date range.');
             return;
         }
         
-        // Show loading indicator
-        const originalContent = elements.marketShareTrendsChart.innerHTML;
-        elements.marketShareTrendsChart.innerHTML = 
-            '<div class="no-data-message"><div class="spinner"></div>Preparing export data...</div>';
+        // Filter to include only selected premium bands
+        const filteredData = filteredByDate.filter(record => 
+            selectedBands.includes(record.PremiumBand)
+        );
         
-        setTimeout(() => {
-            try {
-                // Get data filtered by the main date range filter
-                const filteredByDate = state.esisData.filter(record => {
-                    // Skip records with invalid dates
-                    if (!record.DocumentDate) return false;
-                    
-                    const recordDate = new Date(record.DocumentDate);
-                    return recordDate >= state.filters.startDate && recordDate <= state.filters.endDate;
-                });
-                
-                if (filteredByDate.length === 0) {
-                    throw new Error('No data available for the selected date range.');
-                }
-                
-                // Filter to include only selected premium bands
-                const filteredData = filteredByDate.filter(record => 
-                    selectedBands.includes(record.PremiumBand)
-                );
-                
-                if (filteredData.length === 0) {
-                    throw new Error('No data available for the selected premium bands in this date range.');
-                }
-                
-                // Group data by month and lender
-                const monthlyData = groupByMonthAndLender(filteredData);
-                
-                // Find active lenders
-                const lenders = findActiveLenders(monthlyData);
-                
-                if (lenders.length === 0) {
-                    throw new Error('No lenders found with market share in the selected data.');
-                }
-                
-                // Create CSV content
-                let csvContent = 'Month,';
-                
-                // Add header row with lender names
-                lenders.forEach(lender => {
-                    csvContent += `${lender} (%),`;
-                });
-                
-                csvContent = csvContent.slice(0, -1) + '\n';
-                
-                // Add data rows
-                monthlyData.months.forEach((month, index) => {
-                    csvContent += monthlyData.monthLabels[index] + ',';
-                    
-                    lenders.forEach(lender => {
-                        const pctValue = monthlyData.data[month].lenders[lender + '_pct'] || 0;
-                        csvContent += `${pctValue.toFixed(1)},`;
-                    });
-                    
-                    csvContent = csvContent.slice(0, -1) + '\n';
-                });
-                
-                // Create download link
-                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.setAttribute('href', url);
-                link.setAttribute('download', 'market_share_trends.csv');
-                link.style.visibility = 'hidden';
-                
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                
-                // Restore original chart content
-                elements.marketShareTrendsChart.innerHTML = originalContent;
-                
-                // Show success message
-                showSuccessMessage('Data exported successfully!');
-                
-                console.log('Market share trends data exported successfully');
-            } catch (error) {
-                console.error('Error exporting market share trends data:', error);
-                // Restore original chart content
-                elements.marketShareTrendsChart.innerHTML = originalContent;
-                showError('Export failed: ' + error.message);
-            }
-        }, 10);
-    } catch (outerError) {
-        console.error('Unexpected error in exportTrendsData:', outerError);
-        showError('Unexpected error during export: ' + outerError.message);
-    }
+        if (filteredData.length === 0) {
+            // Restore original chart content
+            elements.marketShareTrendsChart.innerHTML = originalContent;
+            showError('No data available for the selected premium bands in this date range.');
+            return;
+        }
+        
+        // Group data by month and lender
+        const monthlyData = groupByMonthAndLender(filteredData);
+        
+        // Find active lenders
+        const lenders = findActiveLenders(monthlyData);
+        
+        if (lenders.length === 0) {
+            // Restore original chart content
+            elements.marketShareTrendsChart.innerHTML = originalContent;
+            showError('No lenders found with market share in the selected data.');
+            return;
+        }
+        
+        // Create CSV content
+        let csvContent = 'Month,';
+        
+        // Add header row with lender names
+        lenders.forEach(lender => {
+            csvContent += `${lender} (%),`;
+        });
+        
+        csvContent = csvContent.slice(0, -1) + '\n';
+        
+        // Add data rows
+        monthlyData.months.forEach((month, index) => {
+            csvContent += monthlyData.monthLabels[index] + ',';
+            
+            lenders.forEach(lender => {
+                const pctValue = monthlyData.data[month].lenders[lender + '_pct'] || 0;
+                csvContent += `${pctValue.toFixed(1)},`;
+            });
+            
+            csvContent = csvContent.slice(0, -1) + '\n';
+        });
+        
+        // Create download link
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', 'market_share_trends.csv');
+        link.style.visibility = 'hidden';
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Restore original chart content
+        elements.marketShareTrendsChart.innerHTML = originalContent;
+        
+        // Show success message
+        showSuccessMessage('Data exported successfully!');
+        
+        console.log('Market share trends data exported successfully');
+    }, 10);
 }
 
 // Export Functions
@@ -4796,9 +4746,57 @@ function showLoading(show) {
     }
 }
 
-function showError(message) {
-    elements.errorText.textContent = message;
-    elements.errorContainer.classList.remove('hidden');
+/**
+ * Displays an error message to the user and logs it to console
+ * @param {string} message - The error message to display
+ * @param {Error} [error] - Optional original error object for logging
+ */
+function showError(message, error) {
+  if (error) {
+    console.error('Error details:', error);
+  }
+
+  // Make sure we have the error container elements
+  if (!elements.errorContainer || !elements.errorText) {
+    console.warn('Error container elements not found, creating them');
+    
+    // Create error container if it doesn't exist
+    const container = document.createElement('div');
+    container.id = 'error-container';
+    container.className = 'error-container hidden';
+    
+    const content = document.createElement('div');
+    content.className = 'error-content';
+    
+    const text = document.createElement('p');
+    text.id = 'error-text';
+    
+    const dismissBtn = document.createElement('button');
+    dismissBtn.id = 'dismiss-error';
+    dismissBtn.textContent = 'Dismiss';
+    dismissBtn.addEventListener('click', dismissError);
+    
+    content.appendChild(text);
+    content.appendChild(dismissBtn);
+    container.appendChild(content);
+    
+    document.body.appendChild(container);
+    
+    // Update element references
+    elements.errorContainer = container;
+    elements.errorText = text;
+    elements.dismissError = dismissBtn;
+  }
+
+  // Set the error message
+  elements.errorText.textContent = message;
+  elements.errorContainer.classList.remove('hidden');
+  
+  // Hide loading indicator if it's visible
+  showLoading(false);
+  
+  // Auto-dismiss after 8 seconds
+  setTimeout(dismissError, 8000);
 }
 
 function dismissError() {
