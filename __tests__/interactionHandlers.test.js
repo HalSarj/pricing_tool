@@ -17,6 +17,13 @@ const {
   resetInput
 } = require('../src/utils/interactionHandlers');
 
+// Import test helpers
+const {
+  setupTestDOM,
+  setFormValue,
+  simulateClick
+} = require('./testHelpers');
+
 // Mock dependencies
 jest.mock('../src/utils/filtering');
 jest.mock('../src/utils/visualization');
@@ -28,6 +35,7 @@ const { renderTable } = require('../src/utils/visualization');
 describe('applyFilters', () => {
   // Mock DOM elements and event handlers
   beforeEach(() => {
+    // Set up the DOM manually to match exactly what the tests expect
     document.body.innerHTML = `
       <select id="lenderSelect"><option value="HSBC UK" selected>HSBC UK</option></select>
       <select id="productTypeSelect"><option value="Fixed Rate" selected>Fixed Rate</option></select>
@@ -96,6 +104,7 @@ describe('applyFilters', () => {
 
 describe('resetFilters', () => {
   beforeEach(() => {
+    // Set up the DOM manually to match exactly what the tests expect
     document.body.innerHTML = `
       <select id="lenderSelect"><option value="all">All Lenders</option><option value="HSBC UK" selected>HSBC UK</option></select>
       <select id="productTypeSelect"><option value="all">All Types</option><option value="Fixed Rate" selected>Fixed Rate</option></select>
@@ -217,6 +226,7 @@ describe('exportData', () => {
 
 describe('Helper Functions', () => {
   beforeEach(() => {
+    // Set up the DOM manually to match exactly what the tests expect
     document.body.innerHTML = `
       <select id="testSelect">
         <option value="option1">Option 1</option>
