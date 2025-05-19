@@ -2235,6 +2235,12 @@ function handleApplyFilters() {
  * const filteredData = applyFilters(state.esisData, { lenders: false });
  */
 function applyFilters(data, options = {}) {
+    // Validate input data
+    if (!data || !Array.isArray(data)) {
+        console.error('Invalid data provided to applyFilters:', data);
+        return [];
+    }
+    
     // Default options - apply all filters
     const filterOptions = {
         dateRange: true,
@@ -2247,13 +2253,30 @@ function applyFilters(data, options = {}) {
         ...options
     };
     
-    // Validate input data
-    if (!data || !Array.isArray(data)) {
-        console.error('Invalid data provided to applyFilters:', data);
-        return [];
+    // *** OPTIMIZATION: Early return when no filters are active ***
+    const noActiveFilters = (
+        // No date range filter
+        (!state.filters.dateRange[0] || !state.filters.dateRange[1] || !filterOptions.dateRange) &&
+        // No lender filter
+        (!state.filters.lenders || state.filters.lenders.length === 0 || !filterOptions.lenders) &&
+        // No product type filter
+        (!state.filters.productTypes || state.filters.productTypes.length === 0 || !filterOptions.productTypes) &&
+        // No purchase type filter
+        (!state.filters.purchaseTypes || state.filters.purchaseTypes.length === 0 || !filterOptions.purchaseTypes) &&
+        // No LTV filter
+        (state.filters.ltvRange === 'all' || !filterOptions.ltvRange) &&
+        // No product term filter
+        (!filterOptions.productTerm || document.getElementById('product-term-filter')?.value === 'all' || !document.getElementById('product-term-filter')) &&
+        // Using default premium range
+        (state.filters.premiumRange[0] === 0 && state.filters.premiumRange[1] === 500)
+    );
+    
+    if (noActiveFilters) {
+        console.log('No active filters - returning all data quickly');
+        return [...data]; // Return shallow copy for consistency
     }
     
-    // Apply filters conditionally based on options
+    // Apply filters with optimized order
     return data.filter(record => {
         try {
             // Skip invalid records
@@ -2261,18 +2284,9 @@ function applyFilters(data, options = {}) {
                 return false;
             }
             
-            // Filter by date range
-            if (filterOptions.dateRange && state.filters.dateRange[0] && state.filters.dateRange[1]) {
-                if (!record.DocumentDate || !record.Month) { 
-                    return false;
-                }
-                const recordMonth = record.Month; 
-                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
-                    return false;
-                }
-            }
+            // *** OPTIMIZATION: Apply filters in order of expected restrictiveness ***
             
-            // Filter by lender
+            // 1. Lender filter (often very restrictive when applied)
             if (filterOptions.lenders && state.filters.lenders && state.filters.lenders.length > 0) {
                 const provider = (record.Provider || '').trim();
                 const baseLender = (record.BaseLender || '').trim();
@@ -2284,7 +2298,61 @@ function applyFilters(data, options = {}) {
                 }
             }
             
-            // Filter by premium range
+            // 2. Date range filter (usually restrictive)
+            if (filterOptions.dateRange && state.filters.dateRange[0] && state.filters.dateRange[1]) {
+                if (!record.Month) { 
+                    return false;
+                }
+                const recordMonth = record.Month; 
+                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
+                    return false;
+                }
+            }
+            
+            // 3. Product term filter (very restrictive when used)
+            if (filterOptions.productTerm) {
+                const productTermFilter = document.getElementById('product-term-filter');
+                if (productTermFilter && productTermFilter.value !== 'all') {
+                    // Map term values to normalized term values
+                    const normalizedTerm = productTermFilter.value === '2year' ? 24 : 60;
+                    
+                    // Filter by normalized term
+                    if (record.NormalizedTerm !== normalizedTerm) {
+                        return false;
+                    }
+                }
+            }
+            
+            // 4. LTV range filter
+            if (filterOptions.ltvRange && state.filters.ltvRange !== 'all') {
+                // Use our standardized LTV field from mapping
+                let ltv = record.StandardizedLTV;
+                
+                // If LTV is available, filter by it
+                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
+                        return false;
+                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                        return false;
+                    }
+                }
+            }
+            
+            // 5. Product type filter
+            if (filterOptions.productTypes && state.filters.productTypes && state.filters.productTypes.length > 0) {
+                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
+                    return false;
+                }
+            }
+            
+            // 6. Purchase type filter
+            if (filterOptions.purchaseTypes && state.filters.purchaseTypes && state.filters.purchaseTypes.length > 0) {
+                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
+                    return false;
+                }
+            }
+            
+            // 7. Premium range filter (likely least restrictive)
             if (filterOptions.premiumRange) {
                 if (record.PremiumBand === 'N/A') {
                     if (state.filters.premiumRange[0] > -50 || state.filters.premiumRange[1] < 250) { 
@@ -2314,57 +2382,6 @@ function applyFilters(data, options = {}) {
                 } else if (record.PremiumOverSwap < state.filters.premiumRange[0] || record.PremiumOverSwap > state.filters.premiumRange[1]) {
                     // For records with explicit PremiumOverSwap values, filter based on that
                     return false;
-                }
-            }
-            
-            // Filter by product type
-            if (filterOptions.productTypes && state.filters.productTypes && state.filters.productTypes.length > 0) {
-                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by purchase type
-            if (filterOptions.purchaseTypes && state.filters.purchaseTypes && state.filters.purchaseTypes.length > 0) {
-                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by LTV range
-            if (filterOptions.ltvRange && state.filters.ltvRange !== 'all') {
-                // Use our standardized LTV field from mapping
-                let ltv = record.StandardizedLTV;
-                
-                // If LTV is available, filter by it
-                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
-                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
-                        return false;
-                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
-                        return false;
-                    }
-                } else {
-                    // If LTV is not available, we can't filter by it
-                    // For debugging, count how many records are missing LTV data
-                    if (!state.ltvFilterStats) {
-                        state.ltvFilterStats = { missingLtvCount: 0, totalProcessed: 0 };
-                    }
-                    state.ltvFilterStats.missingLtvCount++;
-                    state.ltvFilterStats.totalProcessed++;
-                }
-            }
-            
-            // Filter by product term
-            if (filterOptions.productTerm) {
-                const productTermFilter = document.getElementById('product-term-filter');
-                if (productTermFilter && productTermFilter.value !== 'all') {
-                    // Map term values to normalized term values
-                    const normalizedTerm = productTermFilter.value === '2year' ? 24 : 60;
-                    
-                    // Filter by normalized term
-                    if (record.NormalizedTerm !== normalizedTerm) {
-                        return false;
-                    }
                 }
             }
             
@@ -2411,6 +2428,62 @@ function getCachedFilteredData(data, options = {}) {
     state.filterCache[cacheKey] = filtered;
     
     return filtered;
+}
+
+/**
+ * Measure the performance of the filter function
+ * @param {Array} data - The dataset to filter
+ * @param {Object} options - Filter options
+ * @returns {Object} - Performance metrics and filtered data
+ */
+function measureFilterPerformance(data, options = {}) {
+    console.log('Measuring filter performance...');
+    
+    // Measure filtering performance
+    const startTime = performance.now();
+    const result = applyFilters(data, options);
+    const endTime = performance.now();
+    
+    const duration = endTime - startTime;
+    const recordsPerMs = result.length / duration;
+    
+    console.log(`Filter performance: ${duration.toFixed(2)}ms for ${result.length} records`);
+    console.log(`Processing speed: ${recordsPerMs.toFixed(2)} records/ms`);
+    
+    return { 
+        duration, 
+        recordCount: result.length, 
+        recordsPerMs, 
+        result 
+    };
+}
+
+/**
+ * Test function to compare performance before and after optimization
+ * @returns {Object} - Performance test results
+ */
+function testOptimization() {
+    // Use this in browser console after implementing the optimizations
+    console.log('Testing filter with no active filters:');
+    
+    // Reset filters to inactive state
+    const savedFilters = JSON.parse(JSON.stringify(state.filters));
+    state.filters = {
+        dateRange: [null, null],
+        lenders: [],
+        premiumRange: [0, 500],
+        productTypes: [],
+        purchaseTypes: [],
+        ltvRange: 'all'
+    };
+    
+    // Run the test
+    const result = measureFilterPerformance(state.esisData);
+    
+    // Restore filters
+    state.filters = savedFilters;
+    
+    return result;
 }
 
 /**
