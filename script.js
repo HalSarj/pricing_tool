@@ -1,4 +1,14 @@
 // Mortgage Market Analysis Tool - Main JavaScript
+/**
+ * Mortgage Market Analysis Tool - Main JavaScript
+ * 
+ * Filtering implementation notes:
+ * - The application uses a unified filtering system via the applyFilters function
+ * - This function can be configured to apply specific filters using the options parameter
+ * - For performance, use getCachedFilteredData which implements caching
+ * - To filter without the lender filter (for market share analysis), use { lenders: false }
+ * - When uploading new data, call invalidateFilterCache() to clear the cache
+ */
 
 // Global state
 const state = {
@@ -2054,101 +2064,9 @@ function applyFilters() {
         showLoading(false);
 }
 
-// Break down filtering into separate functions
-function dateRangeFilter(record, dateRange) {
-    if (!dateRange[0] || !dateRange[1]) return true;
-    if (!record.DocumentDate && !record.Month) return false;
-    const recordMonth = record.Month;
-    return recordMonth >= dateRange[0] && recordMonth <= dateRange[1];
-}
-
-function lenderFilter(record, lenders) {
-    if (!lenders || lenders.length === 0) return true;
-    const provider = (record.Provider || '').trim();
-    const baseLender = (record.BaseLender || '').trim();
-    return lenders.some(lender => provider === lender || baseLender === lender);
-}
-
-function premiumRangeFilter(record, premiumRange) {
-    // Handle 'N/A' PremiumBand
-    if (record.PremiumBand === 'N/A') {
-        return premiumRange[0] <= -50 && premiumRange[1] >= 250;
-    }
-    
-    // Handle records with PremiumOverSwap value
-    if (record.PremiumOverSwap !== null && record.PremiumOverSwap !== undefined) {
-        return record.PremiumOverSwap >= premiumRange[0] && record.PremiumOverSwap <= premiumRange[1];
-    }
-    
-    // Handle records with PremiumBand but no PremiumOverSwap
-    if (record.PremiumBand) {
-        // Extract the bounds of the premium band (e.g., '60-80' -> [60, 80])
-        const bandBounds = record.PremiumBand.split('-').map(Number);
-        const bandMin = bandBounds[0];
-        const bandMax = bandBounds[1] || bandBounds[0]; // Handle single value bands
-        
-        // Check if the band overlaps with the filter range
-        const filterMin = premiumRange[0];
-        const filterMax = premiumRange[1];
-        
-        // Check if there's any overlap between the band and filter range
-        return !(bandMin > filterMax || bandMax < filterMin);
-    }
-    
-    // If no PremiumBand or PremiumOverSwap, we can't determine if it should be filtered
-    return false;
-}
-
-function productTypeFilter(record, productTypes) {
-    if (!productTypes || productTypes.length === 0) return true;
-    return record.ProductType && productTypes.includes(record.ProductType);
-}
-
-function purchaseTypeFilter(record, purchaseTypes) {
-    if (!purchaseTypes || purchaseTypes.length === 0) return true;
-    return record.PurchaseType && purchaseTypes.includes(record.PurchaseType);
-}
-
-function ltvRangeFilter(record, ltvRange, ltvFilterStats) {
-    if (ltvRange === 'all') return true;
-    
-    // Use standardized LTV field from mapping
-    let ltv = record.StandardizedLTV;
-    
-    // If LTV is available, filter by it
-    if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
-        if (ltvRange === 'below-80' && ltv >= 80) {
-            // DEBUG: Log some filtered records for verification
-            if (Math.random() < 0.01) { // Log ~1% of filtered records to avoid console spam
-                console.log(`LTV Filter: Excluding record with LTV=${ltv}% (≥80%) from below-80 filter`, 
-                          { provider: record.Provider, loan: record.Loan, ltv: ltv });
-            }
-            return false;
-        } else if (ltvRange === 'above-80' && ltv < 80) {
-            // DEBUG: Log some filtered records for verification
-            if (Math.random() < 0.01) { // Log ~1% of filtered records to avoid console spam
-                console.log(`LTV Filter: Excluding record with LTV=${ltv}% (<80%) from above-80 filter`, 
-                          { provider: record.Provider, loan: record.Loan, ltv: ltv });
-            }
-            return false;
-        }
-        return true;
-    } else {
-        // If LTV is not available, we can't filter by it
-        // For debugging, count how many records are missing LTV data
-        if (!ltvFilterStats) {
-            ltvFilterStats = { missingLtvCount: 0, totalProcessed: 0 };
-        }
-        ltvFilterStats.missingLtvCount++;
-        ltvFilterStats.totalProcessed++;
-        
-        // Log every 100th missing record to avoid console spam
-        if (ltvFilterStats.missingLtvCount % 100 === 0) {
-            console.log(`LTV Filter: ${ltvFilterStats.missingLtvCount} records missing LTV data out of ${ltvFilterStats.totalProcessed} processed`);
-        }
-        return true;
-    }
-}
+// Deprecated filter functions have been removed
+// All filtering logic is now consolidated in the unified applyFilters function
+// See the applyFilters function for implementation details
 
 // filterData function removed - replaced by unified applyFilters function
 
@@ -2294,9 +2212,27 @@ function handleApplyFilters() {
 
 /**
  * Unified filter function that can be configured to apply specific filters
+ * This function replaces multiple separate filtering implementations to reduce 
+ * code duplication and ensure consistent filtering behavior throughout the application.
+ * 
  * @param {Array} data - The dataset to filter
  * @param {Object} options - Configuration for which filters to apply
+ * @param {boolean} [options.dateRange=true] - Whether to apply date range filter
+ * @param {boolean} [options.lenders=true] - Whether to apply lenders filter
+ * @param {boolean} [options.premiumRange=true] - Whether to apply premium range filter
+ * @param {boolean} [options.productTypes=true] - Whether to apply product types filter
+ * @param {boolean} [options.purchaseTypes=true] - Whether to apply purchase types filter
+ * @param {boolean} [options.ltvRange=true] - Whether to apply LTV range filter
+ * @param {boolean} [options.productTerm=true] - Whether to apply product term filter
  * @returns {Array} - Filtered dataset
+ * 
+ * @example
+ * // Apply all filters
+ * const filteredData = applyFilters(state.esisData);
+ * 
+ * @example
+ * // Apply all filters except lender filter
+ * const filteredData = applyFilters(state.esisData, { lenders: false });
  */
 function applyFilters(data, options = {}) {
     // Default options - apply all filters
@@ -2441,10 +2377,16 @@ function applyFilters(data, options = {}) {
 }
 
 /**
- * Get filtered data with caching support
+ * Get filtered data with caching support for improved performance
+ * Uses a cache key based on filter options and current filter state
+ * 
  * @param {Array} data - The dataset to filter
- * @param {Object} options - Filter options
+ * @param {Object} options - Filter options (see applyFilters)
  * @returns {Array} - Filtered dataset
+ * 
+ * @example
+ * // Get cached filtered data without lender filter
+ * const marketData = getCachedFilteredData(state.esisData, { lenders: false });
  */
 function getCachedFilteredData(data, options = {}) {
     // Create a cache key based on options and current filters
@@ -2473,6 +2415,13 @@ function getCachedFilteredData(data, options = {}) {
 
 /**
  * Invalidate filter cache when source data changes
+ * This should be called whenever new data is loaded or filter criteria fundamentally change
+ * to ensure that the cached results are refreshed
+ * 
+ * @example
+ * // Clear the cache after loading new data
+ * loadNewData();
+ * invalidateFilterCache();
  */
 function invalidateFilterCache() {
     state.filterCache = {};
@@ -4962,6 +4911,307 @@ function validatePremiumRange() {
     if (min > max) {
         elements.premiumMax.value = min;
     }
+}
+
+/**
+ * Compare the results of the original filtering approach with our new unified approach
+ * @param {Array} testData - The dataset to test with
+ * @param {Object} testFilters - Test filter values to apply
+ * @returns {Object} - Test results with comparison data
+ */
+function testFilterImplementation(testData, testFilters) {
+    console.log('Testing filter implementation...');
+    console.log('Test filters:', testFilters);
+    
+    // Save original filter state
+    const originalFilters = JSON.parse(JSON.stringify(state.filters));
+    
+    // Apply test filters
+    state.filters = {...testFilters};
+    
+    // Since we've removed the original filterData function, we'll simulate it
+    // by using our unified filter function without caching
+    const startTime1 = performance.now();
+    // Create a simple implementation similar to the original filterData
+    const simulatedOriginalResults = testData.filter(record => {
+        try {
+            // Skip invalid records
+            if (!record || typeof record !== 'object') {
+                return false;
+            }
+            
+            // Filter by date range
+            if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
+                if (!record.DocumentDate || !record.Month) { 
+                    return false;
+                }
+                const recordMonth = record.Month; 
+                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
+                    return false;
+                }
+            }
+            
+            // Filter by lender
+            if (state.filters.lenders && state.filters.lenders.length > 0) {
+                const provider = (record.Provider || '').trim();
+                const baseLender = (record.BaseLender || '').trim();
+                const matchesLender = state.filters.lenders.some(lender => {
+                    return provider === lender || baseLender === lender;
+                });
+                if (!matchesLender) {
+                    return false;
+                }
+            }
+            
+            // Filter by premium range
+            if (record.PremiumBand === 'N/A') {
+                if (state.filters.premiumRange[0] > -50 || state.filters.premiumRange[1] < 250) { 
+                    return false;
+                }
+            } else if (record.PremiumOverSwap === null || record.PremiumOverSwap === undefined) {
+                // Handle records where PremiumOverSwap is not defined but we have a PremiumBand
+                if (record.PremiumBand) {
+                    // Extract the bounds of the premium band (e.g., '60-80' -> [60, 80])
+                    const bandBounds = record.PremiumBand.split('-').map(Number);
+                    const bandMin = bandBounds[0];
+                    const bandMax = bandBounds[1] || bandBounds[0]; // Handle single value bands
+                    
+                    // Check if the band overlaps with the filter range
+                    const filterMin = state.filters.premiumRange[0];
+                    const filterMax = state.filters.premiumRange[1];
+                    
+                    // Check if the band is completely outside the filter range
+                    if (bandMin > filterMax || bandMax < filterMin) {
+                        return false;
+                    }
+                    // Otherwise keep it (there's some overlap)
+                    return true;
+                }
+                // If no PremiumBand, we can't determine if it should be filtered
+                return false;
+            } else if (record.PremiumOverSwap < state.filters.premiumRange[0] || record.PremiumOverSwap > state.filters.premiumRange[1]) {
+                // For records with explicit PremiumOverSwap values, filter based on that
+                return false;
+            }
+            
+            // Filter by product type
+            if (state.filters.productTypes.length > 0) {
+                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
+                    return false;
+                }
+            }
+            
+            // Filter by purchase type
+            if (state.filters.purchaseTypes.length > 0) {
+                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
+                    return false;
+                }
+            }
+            
+            // Filter by LTV range
+            if (state.filters.ltvRange !== 'all') {
+                // Use our standardized LTV field from mapping
+                let ltv = record.StandardizedLTV;
+                
+                // If LTV is available, filter by it
+                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
+                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
+                        return false;
+                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                        return false;
+                    }
+                }
+            }
+            
+            return true;
+        } catch (error) {
+            console.error('Error in simulated original filter:', error, record);
+            return false;
+        }
+    });
+    const endTime1 = performance.now();
+    
+    // Clear the filter cache to ensure a fair comparison
+    invalidateFilterCache();
+    
+    // Test our new unified filter approach
+    const startTime2 = performance.now();
+    const unifiedResults = applyFilters(testData);
+    const endTime2 = performance.now();
+    
+    // Restore original filter state
+    state.filters = originalFilters;
+    
+    // Compare results
+    const originalCount = simulatedOriginalResults.length;
+    const unifiedCount = unifiedResults.length;
+    const countMatch = originalCount === unifiedCount;
+    
+    const originalTime = endTime1 - startTime1;
+    const unifiedTime = endTime2 - startTime2;
+    const timeDiff = originalTime - unifiedTime;
+    const percentFaster = (timeDiff / originalTime) * 100;
+    
+    // Log results
+    console.log('Test results:');
+    console.log(`Simulated original filter: ${originalCount} records in ${originalTime.toFixed(2)}ms`);
+    console.log(`Unified filter: ${unifiedCount} records in ${unifiedTime.toFixed(2)}ms`);
+    console.log(`Record count match: ${countMatch}`);
+    console.log(`Time difference: ${timeDiff.toFixed(2)}ms (${percentFaster.toFixed(2)}% ${percentFaster > 0 ? 'faster' : 'slower'})`);
+    
+    // If counts don't match, analyze the differences
+    if (!countMatch) {
+        console.log('Analyzing differences between filter results...');
+        
+        // Find records that are in original but not in unified
+        const inOriginalOnly = simulatedOriginalResults.filter(record => 
+            !unifiedResults.some(r => r === record));
+            
+        // Find records that are in unified but not in original
+        const inUnifiedOnly = unifiedResults.filter(record => 
+            !simulatedOriginalResults.some(r => r === record));
+            
+        console.log(`Records in original only: ${inOriginalOnly.length}`);
+        console.log(`Records in unified only: ${inUnifiedOnly.length}`);
+        
+        // Show sample differences
+        if (inOriginalOnly.length > 0) {
+            console.log('Sample record in original only:', inOriginalOnly[0]);
+        }
+        if (inUnifiedOnly.length > 0) {
+            console.log('Sample record in unified only:', inUnifiedOnly[0]);
+        }
+    }
+    
+    return {
+        originalCount,
+        unifiedCount,
+        countMatch,
+        originalTime,
+        unifiedTime,
+        timeDiff,
+        percentFaster
+    };
+}
+
+/**
+ * Run a series of filter tests with different filter combinations
+ */
+function runFilterTests() {
+    console.log('Running filter test suite...');
+    
+    // Make sure we have data to test with
+    if (!state.esisData || !Array.isArray(state.esisData) || state.esisData.length === 0) {
+        console.error('No data available for testing');
+        return;
+    }
+    
+    // Test 1: No filters (all data)
+    testFilterImplementation(state.esisData, {
+        dateRange: [null, null],
+        lenders: [],
+        premiumRange: [0, 500],
+        productTypes: [],
+        purchaseTypes: [],
+        ltvRange: 'all'
+    });
+    
+    // Test 2: Date range filter only
+    const months = [...new Set(state.esisData.map(r => r.Month))].sort();
+    if (months.length >= 2) {
+        testFilterImplementation(state.esisData, {
+            dateRange: [months[0], months[Math.floor(months.length / 2)]],
+            lenders: [],
+            premiumRange: [0, 500],
+            productTypes: [],
+            purchaseTypes: [],
+            ltvRange: 'all'
+        });
+    }
+    
+    // Test 3: Lender filter only
+    const lenders = [...new Set(state.esisData.map(r => r.Provider || r.BaseLender).filter(Boolean))];
+    if (lenders.length >= 1) {
+        testFilterImplementation(state.esisData, {
+            dateRange: [null, null],
+            lenders: [lenders[0]],
+            premiumRange: [0, 500],
+            productTypes: [],
+            purchaseTypes: [],
+            ltvRange: 'all'
+        });
+    }
+    
+    // Test 4: LTV filter only
+    testFilterImplementation(state.esisData, {
+        dateRange: [null, null],
+        lenders: [],
+        premiumRange: [0, 500],
+        productTypes: [],
+        purchaseTypes: [],
+        ltvRange: 'below-80'
+    });
+    
+    // Test 5: Multiple filters combined
+    if (months.length >= 2 && lenders.length >= 1) {
+        testFilterImplementation(state.esisData, {
+            dateRange: [months[0], months[Math.floor(months.length / 2)]],
+            lenders: [lenders[0]],
+            premiumRange: [50, 300],
+            productTypes: [],
+            purchaseTypes: [],
+            ltvRange: 'below-80'
+        });
+    }
+    
+    // Test 6: Test caching performance
+    console.log('Testing caching performance...');
+    
+    // Apply the same filter twice to test caching
+    const cacheTestFilters = {
+        dateRange: [months[0], months[months.length - 1]],
+        lenders: [],
+        premiumRange: [0, 500],
+        productTypes: [],
+        purchaseTypes: [],
+        ltvRange: 'all'
+    };
+    
+    // Save original filter state
+    const originalFilters = JSON.parse(JSON.stringify(state.filters));
+    
+    // Apply test filters
+    state.filters = {...cacheTestFilters};
+    
+    // Clear cache before first run
+    invalidateFilterCache();
+    
+    // First run (no cache)
+    const startTime1 = performance.now();
+    const firstRunResults = getCachedFilteredData(state.esisData);
+    const endTime1 = performance.now();
+    
+    // Second run (should use cache)
+    const startTime2 = performance.now();
+    const secondRunResults = getCachedFilteredData(state.esisData);
+    const endTime2 = performance.now();
+    
+    // Restore original filter state
+    state.filters = originalFilters;
+    
+    // Calculate results
+    const firstRunTime = endTime1 - startTime1;
+    const secondRunTime = endTime2 - startTime2;
+    const timeDiff = firstRunTime - secondRunTime;
+    const percentFaster = (timeDiff / firstRunTime) * 100;
+    
+    // Log results
+    console.log('Cache test results:');
+    console.log(`First run (no cache): ${firstRunResults.length} records in ${firstRunTime.toFixed(2)}ms`);
+    console.log(`Second run (cached): ${secondRunResults.length} records in ${secondRunTime.toFixed(2)}ms`);
+    console.log(`Time difference: ${timeDiff.toFixed(2)}ms (${percentFaster.toFixed(2)}% ${percentFaster > 0 ? 'faster' : 'slower'})`);
+    
+    console.log('Filter test suite complete');
 }
 
 /**
