@@ -117,7 +117,7 @@ function initializeApp() {
     if (elements.swapFileInput) elements.swapFileInput.addEventListener('change', handleSwapFileSelect);
     if (elements.analyzeBtn) elements.analyzeBtn.addEventListener('click', processData);
     if (elements.exportBtn) elements.exportBtn.addEventListener('click', exportData);
-    if (elements.applyFiltersBtn) elements.applyFiltersBtn.addEventListener('click', applyFilters);
+    if (elements.applyFiltersBtn) elements.applyFiltersBtn.addEventListener('click', handleApplyFilters);
     if (elements.resetFiltersBtn) elements.resetFiltersBtn.addEventListener('click', resetFilters);
     if (elements.dismissError) elements.dismissError.addEventListener('click', dismissError);
     if (elements.applyMarketShareBtn) elements.applyMarketShareBtn.addEventListener('click', updateMarketShareTable);
@@ -129,7 +129,7 @@ function initializeApp() {
     
     // Add event listener for product term filter
     if (elements.productTermFilter) {
-        elements.productTermFilter.addEventListener('change', applyFilters);
+        elements.productTermFilter.addEventListener('change', handleApplyFilters);
     }
     
     console.log('Mortgage Market Analysis Tool initialized');
@@ -1898,53 +1898,20 @@ function applyFilters() {
             console.log('applyFilters - state.esisData is empty or undefined BEFORE filterData call.');
         }
 
-        // Apply existing filters to the data
-        state.filteredData = filterData(state.esisData);
+        // Apply all filters including product term filter in one step with caching
+        state.filteredData = getCachedFilteredData(state.esisData);
         
-        // Log filtering results after applying standard filters
-        console.log(`Standard filtering complete: ${state.filteredData.length} records match the criteria out of ${state.esisData.length} total records`);
-        
-        // Apply product term filter separately
-        const beforeProductTermFilter = state.filteredData.length;
-        const productTermFilter = document.getElementById('product-term-filter');
-        const selectedProductTerm = productTermFilter ? productTermFilter.value : 'all';
-        
-        // Log detailed information before applying product term filter
-        console.log('=== PRODUCT TERM FILTER - BEFORE APPLYING ===');
-        console.log(`Timestamp: ${new Date().toISOString()}`);
-        console.log(`Records before product term filter: ${beforeProductTermFilter}`);
-        console.log(`Selected product term filter: ${selectedProductTerm}`);
-        
-        // Log sample records before filtering (first 3 records)
-        if (state.filteredData && state.filteredData.length > 0) {
-            console.log('Sample records before product term filtering:');
-            state.filteredData.slice(0, 3).forEach((record, index) => {
-                console.log(`Sample ${index + 1}:`, {
-                    Provider: record.Provider,
-                    NormalizedTerm: record.NormalizedTerm,
-                    TieInPeriod: record.TieInPeriod,
-                    Rate: record.Rate,
-                    PremiumOverSwap: record.PremiumOverSwap
-                });
-            });
+        // Invalidate cache when data source changes
+        if (previousDateStart !== state.filters.dateRange[0] || previousDateEnd !== state.filters.dateRange[1]) {
+            invalidateFilterCache();
         }
         
-        // Apply the product term filter
-        state.filteredData = applyProductTermFilter(state.filteredData);
-        
-        // Calculate filtering statistics
-        const afterProductTermFilter = state.filteredData.length;
-        const removedRecords = beforeProductTermFilter - afterProductTermFilter;
-        const removalPercentage = ((removedRecords / beforeProductTermFilter) * 100).toFixed(2);
-        
-        // Log detailed information after applying product term filter
-        console.log('=== PRODUCT TERM FILTER - AFTER APPLYING ===');
-        console.log(`Records after product term filter: ${afterProductTermFilter}`);
-        console.log(`Removed records: ${removedRecords} (${removalPercentage}%)`);
+        // Log filtering results after applying all filters
+        console.log(`Unified filtering complete: ${state.filteredData.length} records match the criteria out of ${state.esisData.length} total records`);
         
         // Log sample records after filtering (first 3 records)
         if (state.filteredData && state.filteredData.length > 0) {
-            console.log('Sample records after product term filtering:');
+            console.log('Sample filtered records:');
             state.filteredData.slice(0, 3).forEach((record, index) => {
                 console.log(`Sample ${index + 1}:`, {
                     Provider: record.Provider,
@@ -1957,10 +1924,11 @@ function applyFilters() {
         }
         
         // Log warnings for edge cases
-        if (afterProductTermFilter === 0) {
-            console.warn('WARNING: Product term filter removed all records! Check filter criteria.');
-        } else if (removalPercentage > 90) {
-            console.warn(`WARNING: Product term filter removed ${removalPercentage}% of records. Verify this is expected.`);
+        if (state.filteredData.length === 0) {
+            console.warn('WARNING: Filtering removed all records! Check filter criteria.');
+        } else if ((state.esisData.length - state.filteredData.length) / state.esisData.length > 0.9) {
+            const removalPercentage = (((state.esisData.length - state.filteredData.length) / state.esisData.length) * 100).toFixed(2);
+            console.warn(`WARNING: Filtering removed ${removalPercentage}% of records. Verify this is expected.`);
         }
         console.log('===========================================');
         
@@ -2025,12 +1993,174 @@ function applyFilters() {
     }
 }
 
-function filterData(data) {
+// filterData function removed - replaced by unified applyFilters function
+
+/**
+ * Event handler wrapper for the applyFilters function
+ * This function is used as an event handler and calls the actual filtering function
+ */
+function handleApplyFilters() {
+    try {
+        showLoading(true);
+        
+        // Get filter values - with null checks
+        const dateStart = elements.dateStart ? elements.dateStart.value : null;
+        const dateEnd = elements.dateEnd ? elements.dateEnd.value : null;
+        
+        // Store previous date range for comparison
+        const previousDateStart = state.filters.dateRange[0];
+        const previousDateEnd = state.filters.dateRange[1];
+        // Premium range filter removed from UI but maintained in state
+        const premiumMin = 0;
+        const premiumMax = 500;
+        // Get LTV filter value
+        const ltvRange = elements.ltvFilter ? elements.ltvFilter.value : 'all';
+        
+        // Add null checks to prevent errors if lenderFilter is not fully initialized
+        const lenderOptions = elements.lenderFilter ? elements.getOptions(elements.lenderFilter) : [];
+        const selectedLenderOptions = elements.lenderFilter ? elements.getSelectedOptions(elements.lenderFilter) : [];
+        console.log('Total lender options:', lenderOptions.length);
+        console.log('Selected lender options:', selectedLenderOptions.length);
+        
+        // Get selected lenders with null checks
+        const selectedLenders = elements.lenderFilter ? 
+            Array.from(elements.getSelectedOptions(elements.lenderFilter)).map(option => option.value) : [];
+        
+        // Get selected product types with null checks
+        const selectedProductTypes = elements.productType ? 
+            Array.from(elements.getSelectedOptions(elements.productType)).map(option => option.value) : [];
+        
+        // Get selected purchase types with null checks
+        const selectedPurchaseTypes = elements.purchaseType ? 
+            Array.from(elements.getSelectedOptions(elements.purchaseType)).map(option => option.value) : [];
+        
+        // Log filter values for debugging
+        console.log('Applying filters:', {
+            dateRange: [dateStart, dateEnd],
+            premiumRange: [premiumMin, premiumMax],
+            lenders: selectedLenders,
+            productTypes: selectedProductTypes,
+            purchaseTypes: selectedPurchaseTypes
+        });
+        
+        // Update state
+        state.filters.dateRange = [dateStart, dateEnd];
+        state.filters.lenders = selectedLenders.filter(l => l !== ""); // Remove empty selections (All Lenders option)
+        state.filters.premiumRange = [premiumMin, premiumMax];
+        state.filters.productTypes = selectedProductTypes;
+        state.filters.purchaseTypes = selectedPurchaseTypes;
+        state.filters.ltvRange = ltvRange;
+        
+        // Apply all filters including product term filter in one step with caching
+        state.filteredData = getCachedFilteredData(state.esisData);
+        
+        // Invalidate cache when data source changes
+        if (previousDateStart !== state.filters.dateRange[0] || previousDateEnd !== state.filters.dateRange[1]) {
+            invalidateFilterCache();
+        }
+        
+        // Log filtering results after applying all filters
+        console.log(`Unified filtering complete: ${state.filteredData.length} records match the criteria out of ${state.esisData.length} total records`);
+        
+        // Log sample records after filtering (first 3 records)
+        if (state.filteredData && state.filteredData.length > 0) {
+            console.log('Sample filtered records:');
+            state.filteredData.slice(0, 3).forEach((record, index) => {
+                console.log(`Sample ${index + 1}:`, {
+                    Provider: record.Provider,
+                    NormalizedTerm: record.NormalizedTerm,
+                    TieInPeriod: record.TieInPeriod,
+                    Rate: record.Rate,
+                    PremiumOverSwap: record.PremiumOverSwap
+                });
+            });
+        }
+        
+        // Log warnings for edge cases
+        if (state.filteredData.length === 0) {
+            console.warn('WARNING: Filtering removed all records! Check filter criteria.');
+        } else if ((state.esisData.length - state.filteredData.length) / state.esisData.length > 0.9) {
+            const removalPercentage = (((state.esisData.length - state.filteredData.length) / state.esisData.length) * 100).toFixed(2);
+            console.warn(`WARNING: Filtering removed ${removalPercentage}% of records. Verify this is expected.`);
+        }
+        console.log('===========================================');
+        
+        // Process filtered data
+        state.processedData = aggregateByPremiumBandAndMonth(state.filteredData);
+        
+        // Update table
+        renderTable();
+
+        // --- Ensure premium bands are always populated after filters are applied ---
+        if (state.processedData && state.processedData.premiumBands) {
+            populatePremiumBandSelect(state.processedData.premiumBands);
+            elements.marketShareSection.classList.remove('hidden');
+            
+            // Show heatmap section
+            elements.heatmapSection.classList.remove('hidden');
+            
+            // Update heatmap without resetting
+            updateHeatmapWithCurrentFilters();
+            
+            // Make sure event listeners are attached to the radio buttons
+            attachHeatmapModeListeners();
+            
+            // Update market share table if it exists instead of resetting it
+            if (state.marketShareFilters.selectedPremiumBands && 
+                state.marketShareFilters.selectedPremiumBands.length > 0) {
+                updateMarketShareTable();
+            } else {
+                // Auto-select the first premium band if none are selected
+                // This ensures the market share table is displayed without requiring user interaction
+                if (state.processedData.premiumBands && state.processedData.premiumBands.length > 0) {
+                    // Update the market share table with default selection
+                    if (state.processedData.premiumBands.length > 0) {
+                        // Select the first premium band by default
+                        state.marketShareFilters.selectedPremiumBands = [state.processedData.premiumBands[0]];
+                        // Update the market share table
+                        updateMarketShareTable();
+                    }
+                }
+            }
+        } else {
+            elements.marketShareSection.classList.add('hidden');
+        }
+        
+        console.log('Filters applied successfully. Filtered data count:', state.filteredData.length);
+        showLoading(false);
+    } catch (error) {
+        console.error('Error applying filters:', error);
+        showError(`Error applying filters: ${error.message}`);
+        showLoading(false);
+    }
+}
+
+/**
+ * Unified filter function that can be configured to apply specific filters
+ * @param {Array} data - The dataset to filter
+ * @param {Object} options - Configuration for which filters to apply
+ * @returns {Array} - Filtered dataset
+ */
+function applyFilters(data, options = {}) {
+    // Default options - apply all filters
+    const filterOptions = {
+        dateRange: true,
+        lenders: true,
+        premiumRange: true,
+        productTypes: true,
+        purchaseTypes: true,
+        ltvRange: true,
+        productTerm: true,
+        ...options
+    };
+    
+    // Validate input data
     if (!data || !Array.isArray(data)) {
-        console.error('Invalid data provided to filterData:', data);
+        console.error('Invalid data provided to applyFilters:', data);
         return [];
     }
     
+    // Apply filters conditionally based on options
     return data.filter(record => {
         try {
             // Skip invalid records
@@ -2039,7 +2169,7 @@ function filterData(data) {
             }
             
             // Filter by date range
-            if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
+            if (filterOptions.dateRange && state.filters.dateRange[0] && state.filters.dateRange[1]) {
                 if (!record.DocumentDate || !record.Month) { 
                     return false;
                 }
@@ -2050,7 +2180,7 @@ function filterData(data) {
             }
             
             // Filter by lender
-            if (state.filters.lenders && state.filters.lenders.length > 0) {
+            if (filterOptions.lenders && state.filters.lenders && state.filters.lenders.length > 0) {
                 const provider = (record.Provider || '').trim();
                 const baseLender = (record.BaseLender || '').trim();
                 const matchesLender = state.filters.lenders.some(lender => {
@@ -2062,70 +2192,62 @@ function filterData(data) {
             }
             
             // Filter by premium range
-            if (record.PremiumBand === 'N/A') {
-                if (state.filters.premiumRange[0] > -50 || state.filters.premiumRange[1] < 250) { 
-                    return false;
-                }
-            } else if (record.PremiumOverSwap === null || record.PremiumOverSwap === undefined) {
-                // Handle records where PremiumOverSwap is not defined but we have a PremiumBand
-                if (record.PremiumBand) {
-                    // Extract the bounds of the premium band (e.g., '60-80' -> [60, 80])
-                    const bandBounds = record.PremiumBand.split('-').map(Number);
-                    const bandMin = bandBounds[0];
-                    const bandMax = bandBounds[1] || bandBounds[0]; // Handle single value bands
-                    
-                    // Check if the band overlaps with the filter range
-                    const filterMin = state.filters.premiumRange[0];
-                    const filterMax = state.filters.premiumRange[1];
-                    
-                    // Check if the band is completely outside the filter range
-                    if (bandMin > filterMax || bandMax < filterMin) {
+            if (filterOptions.premiumRange) {
+                if (record.PremiumBand === 'N/A') {
+                    if (state.filters.premiumRange[0] > -50 || state.filters.premiumRange[1] < 250) { 
                         return false;
                     }
-                    // Otherwise keep it (there's some overlap)
-                    return true;
+                } else if (record.PremiumOverSwap === null || record.PremiumOverSwap === undefined) {
+                    // Handle records where PremiumOverSwap is not defined but we have a PremiumBand
+                    if (record.PremiumBand) {
+                        // Extract the bounds of the premium band (e.g., '60-80' -> [60, 80])
+                        const bandBounds = record.PremiumBand.split('-').map(Number);
+                        const bandMin = bandBounds[0];
+                        const bandMax = bandBounds[1] || bandBounds[0]; // Handle single value bands
+                        
+                        // Check if the band overlaps with the filter range
+                        const filterMin = state.filters.premiumRange[0];
+                        const filterMax = state.filters.premiumRange[1];
+                        
+                        // Check if the band is completely outside the filter range
+                        if (bandMin > filterMax || bandMax < filterMin) {
+                            return false;
+                        }
+                        // Otherwise keep it (there's some overlap)
+                        return true;
+                    }
+                    // If no PremiumBand, we can't determine if it should be filtered
+                    return false;
+                } else if (record.PremiumOverSwap < state.filters.premiumRange[0] || record.PremiumOverSwap > state.filters.premiumRange[1]) {
+                    // For records with explicit PremiumOverSwap values, filter based on that
+                    return false;
                 }
-                // If no PremiumBand, we can't determine if it should be filtered
-                return false;
-            } else if (record.PremiumOverSwap < state.filters.premiumRange[0] || record.PremiumOverSwap > state.filters.premiumRange[1]) {
-                // For records with explicit PremiumOverSwap values, filter based on that
-                return false;
             }
             
             // Filter by product type
-            if (state.filters.productTypes.length > 0) {
+            if (filterOptions.productTypes && state.filters.productTypes && state.filters.productTypes.length > 0) {
                 if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
                     return false;
                 }
             }
             
             // Filter by purchase type
-            if (state.filters.purchaseTypes.length > 0) {
+            if (filterOptions.purchaseTypes && state.filters.purchaseTypes && state.filters.purchaseTypes.length > 0) {
                 if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
                     return false;
                 }
             }
             
             // Filter by LTV range
-            if (state.filters.ltvRange !== 'all') {
+            if (filterOptions.ltvRange && state.filters.ltvRange !== 'all') {
                 // Use our standardized LTV field from mapping
                 let ltv = record.StandardizedLTV;
                 
                 // If LTV is available, filter by it
                 if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
                     if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
-                        // DEBUG: Log some filtered records for verification
-                        if (Math.random() < 0.01) { // Log ~1% of filtered records to avoid console spam
-                            console.log(`LTV Filter: Excluding record with LTV=${ltv}% (≥80%) from below-80 filter`, 
-                                      { provider: record.Provider, loan: record.Loan, ltv: ltv });
-                        }
                         return false;
                     } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
-                        // DEBUG: Log some filtered records for verification
-                        if (Math.random() < 0.01) { // Log ~1% of filtered records to avoid console spam
-                            console.log(`LTV Filter: Excluding record with LTV=${ltv}% (<80%) from above-80 filter`, 
-                                      { provider: record.Provider, loan: record.Loan, ltv: ltv });
-                        }
                         return false;
                     }
                 } else {
@@ -2136,21 +2258,68 @@ function filterData(data) {
                     }
                     state.ltvFilterStats.missingLtvCount++;
                     state.ltvFilterStats.totalProcessed++;
+                }
+            }
+            
+            // Filter by product term
+            if (filterOptions.productTerm) {
+                const productTermFilter = document.getElementById('product-term-filter');
+                if (productTermFilter && productTermFilter.value !== 'all') {
+                    // Map term values to normalized term values
+                    const normalizedTerm = productTermFilter.value === '2year' ? 24 : 60;
                     
-                    // Log every 100th missing record to avoid console spam
-                    if (state.ltvFilterStats.missingLtvCount % 100 === 0) {
-                        console.log(`LTV Filter: ${state.ltvFilterStats.missingLtvCount} records missing LTV data out of ${state.ltvFilterStats.totalProcessed} processed`);
+                    // Filter by normalized term
+                    if (record.NormalizedTerm !== normalizedTerm) {
+                        return false;
                     }
                 }
             }
             
-            // Debug statement removed to improve performance
             return true;
         } catch (error) {
-            console.error('Error filtering record:', error, record);
+            console.error('Error filtering record in applyFilters:', error, record);
             return false;
         }
     });
+}
+
+/**
+ * Get filtered data with caching support
+ * @param {Array} data - The dataset to filter
+ * @param {Object} options - Filter options
+ * @returns {Array} - Filtered dataset
+ */
+function getCachedFilteredData(data, options = {}) {
+    // Create a cache key based on options and current filters
+    const cacheKey = JSON.stringify({
+        options,
+        filters: state.filters
+    });
+    
+    // Initialize filter cache if needed
+    if (!state.filterCache) state.filterCache = {};
+    
+    // Use cached results if available
+    if (state.filterCache[cacheKey]) {
+        console.log('Using cached filtered data');
+        return state.filterCache[cacheKey];
+    }
+    
+    // Filter the data
+    const filtered = applyFilters(data, options);
+    
+    // Cache the results
+    state.filterCache[cacheKey] = filtered;
+    
+    return filtered;
+}
+
+/**
+ * Invalidate filter cache when source data changes
+ */
+function invalidateFilterCache() {
+    state.filterCache = {};
+    console.log('Filter cache invalidated');
 }
 
 function resetFilters() {
@@ -2348,84 +2517,6 @@ function resetMarketShareTrends() {
 
 // --- MARKET SHARE: Aggregate data by lender and premium band ---
 function aggregateLenderMarketShare(selectedBands) {
-    // Use the currently filtered data but remove any lender filter
-    // This ensures the market share analysis respects all other filters
-    function removeOnlyLenderFilter(data) {
-        if (!data || !Array.isArray(data)) {
-            console.error('Invalid data provided to removeOnlyLenderFilter:', data);
-            return [];
-        }
-        
-        // If no lender filter is applied, just return the data as is
-        if (!state.filters.lenders || state.filters.lenders.length === 0) {
-            return data;
-        }
-        
-        // Otherwise, we need to re-filter the original data with all filters except lender
-        return state.esisData.filter(record => {
-            try {
-                // Skip invalid records
-                if (!record || typeof record !== 'object') {
-                    return false;
-                }
-                
-                // Filter by date range
-                if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
-                    if (!record.DocumentDate || !record.Month) { 
-                        return false;
-                    }
-                    const recordMonth = record.Month; 
-                    if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
-                        return false;
-                    }
-                }
-                
-                // Filter by product type
-                if (state.filters.productTypes.length > 0) {
-                    if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
-                        return false;
-                    }
-                }
-                
-                // Filter by purchase type
-                if (state.filters.purchaseTypes.length > 0) {
-                    if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
-                        return false;
-                    }
-                }
-                
-                // Filter by LTV range
-                if (state.filters.ltvRange !== 'all') {
-                    // Use our standardized LTV field from mapping
-                    let ltv = record.StandardizedLTV;
-                    
-                    // If LTV is available, filter by it
-                    if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
-                        if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
-                            return false;
-                        } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
-                            return false;
-                        }
-                    }
-                }
-                
-                // Apply product term filter
-                if (document.getElementById('product-term-filter').value !== 'all') {
-                    const termFilterResult = getDataByProductTerm([record], document.getElementById('product-term-filter').value);
-                    if (termFilterResult.length === 0) {
-                        return false;
-                    }
-                }
-                
-                // Ignore lender filter - include all lenders
-                return true;
-            } catch (error) {
-                console.error('Error in removeOnlyLenderFilter:', error, record);
-                return false;
-            }
-        });
-    }
-    
     // Temporarily adjust premium range to include 500-520 band if it's selected
     const originalPremiumRange = [...state.filters.premiumRange];
     
@@ -2435,22 +2526,10 @@ function aggregateLenderMarketShare(selectedBands) {
         state.filters.premiumRange[1] = 520;
     }
     
-    // Get data with all filters except lender filter (safely)
-    let filtered = [];
-    if (state.filteredData && Array.isArray(state.filteredData)) {
-        filtered = removeOnlyLenderFilter(state.filteredData);
-        console.log(`Market Share Analysis: Using ${filtered.length} records (respecting all filters except lender)`);
-    } else {
-        // Fallback to using all ESIS data if filtered data is not available
-        console.log('Market Share Analysis: Filtered data not available, using all ESIS data');
-        if (state.esisData && Array.isArray(state.esisData)) {
-            filtered = removeOnlyLenderFilter(state.esisData);
-            console.log(`Market Share Analysis: Using ${filtered.length} records from all ESIS data`);
-        } else {
-            console.error('Market Share Analysis: No valid data available');
-            filtered = [];
-        }
-    }
+    // Get filtered data without lender filter
+    console.log('Getting filtered data for market share analysis (without lender filter)');
+    let filtered = getCachedFilteredData(state.esisData, { lenders: false });
+    console.log(`Market Share Analysis: Using ${filtered.length} records (respecting all filters except lender)`);
     
     // Restore original premium range
     state.filters.premiumRange = originalPremiumRange;
@@ -2717,68 +2796,7 @@ function updateMarketShareTable() {
     }
     
     // Create a custom filtered dataset that respects all filters EXCEPT lender filter
-    const data = state.esisData.filter(record => {
-        try {
-            // Skip invalid records
-            if (!record || typeof record !== 'object') {
-                return false;
-            }
-            
-            // Filter by date range
-            if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
-                if (!record.DocumentDate || !record.Month) { 
-                    return false;
-                }
-                const recordMonth = record.Month; 
-                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
-                    return false;
-                }
-            }
-            
-            // Filter by product type
-            if (state.filters.productTypes.length > 0) {
-                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by purchase type
-            if (state.filters.purchaseTypes.length > 0) {
-                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by LTV range
-            if (state.filters.ltvRange !== 'all') {
-                // Use our standardized LTV field from mapping
-                let ltv = record.StandardizedLTV;
-                
-                // If LTV is available, filter by it
-                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
-                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
-                        return false;
-                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
-                        return false;
-                    }
-                }
-            }
-            
-            // Apply product term filter
-            if (document.getElementById('product-term-filter').value !== 'all') {
-                const termFilterResult = getDataByProductTerm([record], document.getElementById('product-term-filter').value);
-                if (termFilterResult.length === 0) {
-                    return false;
-                }
-            }
-            
-            // Ignore lender filter - include all lenders
-            return true;
-        } catch (error) {
-            console.error('Error in market share filtering:', error, record);
-            return false;
-        }
-    });
+    const data = getCachedFilteredData(state.esisData, { lenders: false });
     
     console.log(`Market Share Analysis: Using ${data.length} records (respecting all filters except lender)`);
     
@@ -3562,79 +3580,8 @@ function formatCurrency(value) {
 
 // --- HEATMAP: Helper function to get data without lender filter ---
 function getHeatmapData() {
-    // If no lender filter is applied, just use the current filtered data
-    if (!state.filters.lenders || state.filters.lenders.length === 0) {
-        return state.filteredData || [];
-    }
-    
-    // Otherwise, we need to re-filter the original data with all filters except lender
-    console.log('Removing lender filter for heatmap visualization');
-    return state.esisData.filter(record => {
-        try {
-            // Skip invalid records
-            if (!record || typeof record !== 'object') {
-                return false;
-            }
-            
-            // Filter by date range
-            if (state.filters.dateRange[0] && state.filters.dateRange[1]) {
-                if (!record.DocumentDate || !record.Month) { 
-                    return false;
-                }
-                const recordMonth = record.Month; 
-                if (recordMonth < state.filters.dateRange[0] || recordMonth > state.filters.dateRange[1]) {
-                    return false;
-                }
-            }
-            
-            // Filter by product type
-            if (state.filters.productTypes.length > 0) {
-                if (!record.ProductType || !state.filters.productTypes.includes(record.ProductType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by purchase type
-            if (state.filters.purchaseTypes.length > 0) {
-                if (!record.PurchaseType || !state.filters.purchaseTypes.includes(record.PurchaseType)) {
-                    return false;
-                }
-            }
-            
-            // Filter by LTV range
-            if (state.filters.ltvRange !== 'all') {
-                // Use our standardized LTV field from mapping
-                let ltv = record.StandardizedLTV;
-                
-                // If LTV is available, filter by it
-                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
-                    if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
-                        return false;
-                    } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
-                        return false;
-                    }
-                }
-            }
-            
-            // Apply product term filter
-            // Get product term filter with null check
-            const productTermFilter = document.getElementById('product-term-filter');
-            const productTermValue = productTermFilter ? productTermFilter.value : 'all';
-            
-            if (productTermValue !== 'all') {
-                const termFilterResult = getDataByProductTerm([record], productTermValue);
-                if (termFilterResult.length === 0) {
-                    return false;
-                }
-            }
-            
-            // Ignore lender filter - include all lenders
-            return true;
-        } catch (error) {
-            console.error('Error in getHeatmapData:', error, record);
-            return false;
-        }
-    });
+    console.log('Getting filtered data for heatmap visualization (without lender filter)');
+    return getCachedFilteredData(state.esisData, { lenders: false });
 }
 
 // --- HEATMAP: Update Function ---
