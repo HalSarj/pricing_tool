@@ -18,6 +18,12 @@ const state = {
     table: null,
     marketShareTable: null,
     filterCache: null,
+    marketSizing: {
+        enabled: false,
+        totalMonthlyMarket: 20509500000, // Default: £1B per month
+        ltvFactorBelow80: 0.69,          // Default multiplier for <80% LTV
+        ltvFactorAbove80: 0.31,          // Default multiplier for >80% LTV
+    },
     filters: {
         dateRange: [null, null],
         lenders: [],
@@ -162,6 +168,12 @@ function initElementReferences() {
     elements.trendsApplyBtn = elements.getElement('trends-apply-btn');
     elements.trendsExportBtn = elements.getElement('trends-export-btn');
     elements.marketShareTrendsChart = elements.getElement('market-share-trends-chart');
+    elements.marketSizingSection = elements.getElement('market-sizing-section');
+    elements.marketSizingToggle = elements.getElement('market-sizing-toggle');
+    elements.totalMonthlyMarket = elements.getElement('total-monthly-market');
+    elements.ltvFactorBelow80 = elements.getElement('ltv-factor-below-80');
+    elements.ltvFactorAbove80 = elements.getElement('ltv-factor-above-80');
+    elements.applyMarketSizingBtn = elements.getElement('apply-market-sizing');
     
     console.log('Element references initialized');
 }
@@ -192,6 +204,7 @@ function initializeApp() {
     if (elements.dismissError) elements.dismissError.addEventListener('click', dismissError);
     if (elements.applyMarketShareBtn) elements.applyMarketShareBtn.addEventListener('click', updateMarketShareTable);
     if (elements.exportMarketShareBtn) elements.exportMarketShareBtn.addEventListener('click', exportMarketShareData);
+    if (elements.applyMarketSizingBtn) elements.applyMarketSizingBtn.addEventListener('click', applyMarketSizingConfig);
     
     // Add non-filter event listeners
     nonFilterListeners.forEach(({ element, event, handler }) => {
@@ -209,20 +222,144 @@ function initializeApp() {
     console.log('Mortgage Market Analysis Tool initialized with auto-applying filters');
 }
 
+/**
+ * Function to handle the market sizing configuration
+ * Updates the state with values from the UI and re-processes data if needed
+ */
+function applyMarketSizingConfig() {
+    state.marketSizing.enabled = elements.marketSizingToggle.checked;
+    state.marketSizing.totalMonthlyMarket = parseFloat(elements.totalMonthlyMarket.value);
+    state.marketSizing.ltvFactorBelow80 = parseFloat(elements.ltvFactorBelow80.value);
+    state.marketSizing.ltvFactorAbove80 = parseFloat(elements.ltvFactorAbove80.value);
+    
+    console.log('Market sizing configuration updated:', state.marketSizing);
+    
+    // Update UI to reflect the current market sizing state
+    if (state.marketSizing.enabled) {
+        renderMarketSizingToggle(true);
+    } else {
+        renderMarketSizingToggle(false);
+    }
+    
+    // Re-process data with the new market sizing configuration
+    if (state.esisData && state.esisData.length > 0) {
+        processData();
+    }
+}
+
+/**
+ * Renders a toggle for switching between raw and market-sized data views
+ * @param {boolean} visible - Whether the toggle should be visible
+ */
+function renderMarketSizingToggle(visible) {
+    // Create the toggle if it doesn't exist
+    let toggleContainer = document.getElementById('market-sizing-toggle-container');
+    
+    if (!toggleContainer) {
+        toggleContainer = document.createElement('div');
+        toggleContainer.id = 'market-sizing-toggle-container';
+        toggleContainer.className = 'market-sizing-toggle-container';
+        
+        // Add a label
+        const label = document.createElement('label');
+        label.textContent = 'View Market-Sized Data:';
+        label.htmlFor = 'view-market-sized';
+        
+        // Create the toggle switch
+        const toggle = document.createElement('input');
+        toggle.type = 'checkbox';
+        toggle.id = 'view-market-sized';
+        toggle.checked = state.marketSizing && state.marketSizing.enabled;
+        
+        // Add event listener
+        toggle.addEventListener('change', function() {
+            // Update all visualizations to use market-sized data if checked
+            if (state.marketSizing) {
+                state.marketSizing.viewEnabled = this.checked;
+                
+                // Update all visualizations to use market-sized data
+                if (state.processedData) {
+                    renderTable();
+                    
+                    // Update other visualizations too if needed
+                    if (state.lenderMarketShareData) {
+                        updateMarketShareTable();
+                    }
+                    
+                    updateHeatmap();
+                    
+                    // Update market share trends chart if it exists
+                    if (state.marketShareTrends && state.marketShareTrends.selectedPremiumBands) {
+                        updateMarketShareTrendsChart();
+                    }
+                }
+                
+                console.log(`Market-sized view ${this.checked ? 'enabled' : 'disabled'}`);
+            }
+        });
+        
+        // Add to the DOM
+        toggleContainer.appendChild(label);
+        toggleContainer.appendChild(toggle);
+        
+        // Try to insert before results-table
+        const resultsTable = document.getElementById('results-table');
+        if (resultsTable && resultsTable.parentNode) {
+            resultsTable.parentNode.insertBefore(toggleContainer, resultsTable);
+        } else {
+            // Fallback to adding at the end of results-section
+            const resultsSection = document.getElementById('results-section');
+            if (resultsSection) {
+                resultsSection.appendChild(toggleContainer);
+            }
+        }
+        
+        // Add CSS styles
+        const style = document.createElement('style');
+        style.textContent = `
+            .market-sizing-toggle-container {
+                margin: 10px 0;
+                padding: 8px;
+                background-color: #f0f8ff;
+                border-radius: 4px;
+                display: flex;
+                align-items: center;
+                justify-content: flex-end;
+            }
+            
+            .market-sizing-toggle-container label {
+                margin-right: 10px;
+                font-weight: bold;
+            }
+            
+            .market-sizing-toggle-container input[type="checkbox"] {
+                width: 18px;
+                height: 18px;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    
+    // Show or hide the toggle based on whether market sizing is enabled
+    toggleContainer.style.display = visible ? 'flex' : 'none';
+    
+    // Add element reference for future access
+    if (!elements.viewMarketSized) {
+        elements.viewMarketSized = document.getElementById('view-market-sized');
+    }
+}
+
 // Apply error handling wrappers to critical functions
 // Core data processing functions
 processData = withAsyncErrorHandling(processData, 'processData');
 enrichEsisData = withErrorHandling(enrichEsisData, 'enrichEsisData');
-mapFieldNames = withErrorHandling(mapFieldNames, 'mapFieldNames');
-aggregateByPremiumBandAndMonth = withErrorHandling(aggregateByPremiumBandAndMonth, 'aggregateByPremiumBandAndMonth');
-
-// File handling functions
-parseCSVFile = withAsyncErrorHandling(parseCSVFile, 'parseCSVFile');
-parseExcelFile = withAsyncErrorHandling(parseExcelFile, 'parseExcelFile');
-
-// UI and visualization functions
-renderTable = withErrorHandling(renderTable, 'renderTable');
 applyFilters = withErrorHandling(applyFilters, 'applyFilters');
+getCachedFilteredData = withErrorHandling(getCachedFilteredData, 'getCachedFilteredData');
+invalidateFilterCache = withErrorHandling(invalidateFilterCache, 'invalidateFilterCache');
+applyMarketSizingConfig = withErrorHandling(applyMarketSizingConfig, 'applyMarketSizingConfig');
+renderMarketSizingToggle = withErrorHandling(renderMarketSizingToggle, 'renderMarketSizingToggle');
+
+// UI update functions
 updateMarketShareTable = withErrorHandling(updateMarketShareTable, 'updateMarketShareTable');
 updateHeatmap = withErrorHandling(updateHeatmap, 'updateHeatmap');
 renderTrendsChart = withErrorHandling(renderTrendsChart, 'renderTrendsChart');
@@ -672,6 +809,66 @@ function enrichEsisData(esisDataArray) {
     console.log('DEBUG - Total loan amount after swap rate filtering:', postEnrichmentTotal.toLocaleString());
     console.log('DEBUG - Excluded loan amount due to missing swap rates:', state.swapRateTracking.excludedLoanAmount.toLocaleString());
     console.log('DEBUG - Verification: Original total - Excluded total =', (preEnrichmentTotal - state.swapRateTracking.excludedLoanAmount).toLocaleString());
+    
+    // ADD MARKET SIZING CALCULATION HERE - Only if market sizing is enabled
+    if (state.marketSizing && state.marketSizing.enabled) {
+        console.log('Applying market sizing with configuration:', state.marketSizing);
+        
+        // Group by month to calculate monthly totals
+        const monthlyTotals = {};
+        enrichedData.forEach(record => {
+            if (!monthlyTotals[record.Month]) {
+                monthlyTotals[record.Month] = {
+                    total: 0,
+                    below80: 0,
+                    above80: 0
+                };
+            }
+            
+            const amount = record.Loan || 0;
+            monthlyTotals[record.Month].total += amount;
+            
+            if (record.StandardizedLTV < 80) {
+                monthlyTotals[record.Month].below80 += amount;
+            } else {
+                monthlyTotals[record.Month].above80 += amount;
+            }
+        });
+        
+        // Calculate market-sized values for each record
+        console.log('Monthly totals for market sizing:', monthlyTotals);
+        
+        enrichedData.forEach(record => {
+            const month = record.Month;
+            const amount = record.Loan || 0;
+            
+            if (monthlyTotals[month] && monthlyTotals[month].total > 0) {
+                // Calculate this record's percentage of the monthly total
+                const pct = amount / monthlyTotals[month].total;
+                
+                // Apply market sizing based on LTV
+                if (record.StandardizedLTV < 80) {
+                    record.MarketSizedLoan = state.marketSizing.totalMonthlyMarket * pct * state.marketSizing.ltvFactorBelow80;
+                } else {
+                    record.MarketSizedLoan = state.marketSizing.totalMonthlyMarket * pct * state.marketSizing.ltvFactorAbove80;
+                }
+                
+                record.MarketSizingApplied = true;
+            } else {
+                // Default fallback if we can't calculate
+                record.MarketSizedLoan = record.Loan;
+                record.MarketSizingApplied = false;
+            }
+        });
+        
+        // Calculate market sized total for verification
+        const marketSizedTotal = enrichedData.reduce((sum, record) => sum + (record.MarketSizedLoan || 0), 0);
+        console.log('DEBUG - Total market sized loan amount:', marketSizedTotal.toLocaleString());
+        
+        // Calculate scaling factor for verification
+        const scalingFactor = marketSizedTotal / postEnrichmentTotal;
+        console.log('DEBUG - Market sizing scaling factor:', scalingFactor.toFixed(2));
+    }
     
     return enrichedData;
 }
@@ -1351,142 +1548,204 @@ function aggregateByPremiumBandAndMonth(records) {
     // DEBUG: Calculate simple sum of all loans before aggregation
     const preAggregationTotal = records.reduce((sum, record) => sum + (record.Loan || 0), 0);
     console.log('DEBUG - Total loan amount before aggregation:', preAggregationTotal.toLocaleString());
-        if (!records || !Array.isArray(records) || records.length === 0) {
-            console.warn('No valid records to aggregate');
-            return {
-                premiumBands: [],
-                months: [],
-                data: {},
-                totals: {
-                    byPremiumBand: {},
-                    byMonth: {},
-                    overall: 0
-                }
-            };
-        }
-
-        if (records.length > 0) {
-            console.log(`aggregateByPremiumBandAndMonth - First input record: Month=${records[0].Month}, PremiumBand=${records[0].PremiumBand}, Loan=${records[0].Loan}`);
-        }
-        
-        // Get unique premium bands and months
-        const premiumBands = [...new Set(records.map(r => r.PremiumBand).filter(Boolean))].sort((a, b) => {
-            // Sort premium bands numerically, with error handling
-            const aParts = a.split('-');
-            const bParts = b.split('-');
-            
-            if (!aParts[0] || !bParts[0]) {
-                console.error('Invalid premium band format:', a, b);
-                return 0;
-            }
-            
-            const aLower = parseInt(aParts[0]);
-            const bLower = parseInt(bParts[0]);
-            
-            if (isNaN(aLower) || isNaN(bLower)) {
-                console.error('Error parsing premium bands as numbers:', a, b);
-                return 0;
-            }
-            
-            return aLower - bLower;
-        });
-        
-        const months = [...new Set(records.map(r => r.Month).filter(Boolean))].sort();
-        
-        // Create aggregated data structure
-        const aggregatedData = {
-            premiumBands,
-            months,
+    
+    if (!records || !Array.isArray(records) || records.length === 0) {
+        console.warn('No valid records to aggregate');
+        return {
+            premiumBands: [],
+            months: [],
             data: {},
+            marketSizedData: {}, // Add marketSizedData structure
             totals: {
+                byPremiumBand: {},
+                byMonth: {},
+                overall: 0
+            },
+            marketSizedTotals: { // Add marketSizedTotals structure
                 byPremiumBand: {},
                 byMonth: {},
                 overall: 0
             }
         };
+    }
+
+    if (records.length > 0) {
+        console.log(`aggregateByPremiumBandAndMonth - First input record: Month=${records[0].Month}, PremiumBand=${records[0].PremiumBand}, Loan=${records[0].Loan}, MarketSizedLoan=${records[0].MarketSizedLoan || 'N/A'}`);
+    }
+    
+    // Get unique premium bands and months
+    const premiumBands = [...new Set(records.map(r => r.PremiumBand).filter(Boolean))].sort((a, b) => {
+        // Sort premium bands numerically, with error handling
+        const aParts = a.split('-');
+        const bParts = b.split('-');
         
-        // Initialize data structure
-        premiumBands.forEach(band => {
-            aggregatedData.data[band] = {};
-            aggregatedData.totals.byPremiumBand[band] = 0;
-            
-            months.forEach(month => {
-                aggregatedData.data[band][month] = 0;
-            });
-        });
+        if (!aParts[0] || !bParts[0]) {
+            console.error('Invalid premium band format:', a, b);
+            return 0;
+        }
+        
+        const aLower = parseInt(aParts[0]);
+        const bLower = parseInt(bParts[0]);
+        
+        if (isNaN(aLower) || isNaN(bLower)) {
+            console.error('Error parsing premium bands as numbers:', a, b);
+            return 0;
+        }
+        
+        return aLower - bLower;
+    });
+    
+    const months = [...new Set(records.map(r => r.Month).filter(Boolean))].sort();
+    
+    // Create aggregated data structure with both raw and market-sized data
+    const aggregatedData = {
+        premiumBands,
+        months,
+        data: {},           // Raw data
+        marketSizedData: {}, // Market-sized data
+        totals: {
+            byPremiumBand: {},
+            byMonth: {},
+            overall: 0
+        },
+        marketSizedTotals: {
+            byPremiumBand: {},
+            byMonth: {},
+            overall: 0
+        }
+    };
+    
+    // Initialize data structures
+    premiumBands.forEach(band => {
+        aggregatedData.data[band] = {};
+        aggregatedData.marketSizedData[band] = {};
+        aggregatedData.totals.byPremiumBand[band] = 0;
+        aggregatedData.marketSizedTotals.byPremiumBand[band] = 0;
         
         months.forEach(month => {
-            aggregatedData.totals.byMonth[month] = 0;
+            aggregatedData.data[band][month] = 0;
+            aggregatedData.marketSizedData[band][month] = 0;
         });
-        
-        // DEBUG: Create a tracking object to detect potential double-counting
-        const loanTracking = {
+    });
+    
+    months.forEach(month => {
+        aggregatedData.totals.byMonth[month] = 0;
+        aggregatedData.marketSizedTotals.byMonth[month] = 0;
+    });
+    
+    // DEBUG: Create a tracking object to detect potential double-counting
+    const loanTracking = {
+        byBandMonth: 0,
+        byPremiumBand: 0,
+        byMonth: 0,
+        overall: 0,
+        marketSized: {
             byBandMonth: 0,
             byPremiumBand: 0,
             byMonth: 0,
             overall: 0
-        };
-        
-        // Aggregate loan amounts
-        records.forEach((record, idx) => {
-            if (record.PremiumBand && record.Month && record.Loan) {
-                // Make sure the band and month exist in our structure
-                if (aggregatedData.data[record.PremiumBand] && 
-                    months.includes(record.Month)) {
-                    
-                    // DEBUG: Track the first few records for detailed analysis
-                    const isTrackedRecord = idx < 3;
-                    if (isTrackedRecord) {
-                        console.log(`DEBUG - Aggregating record ${idx}: Loan=${record.Loan}, PremiumBand=${record.PremiumBand}, Month=${record.Month}`);
-                    }
-                    
-                    aggregatedData.data[record.PremiumBand][record.Month] += record.Loan;
-                    loanTracking.byBandMonth += record.Loan;
-                    
-                    aggregatedData.totals.byPremiumBand[record.PremiumBand] += record.Loan;
-                    loanTracking.byPremiumBand += record.Loan;
-                    
-                    aggregatedData.totals.byMonth[record.Month] += record.Loan;
-                    loanTracking.byMonth += record.Loan;
-                    
-                    aggregatedData.totals.overall += record.Loan;
-                    loanTracking.overall += record.Loan;
-                    
-                    if (isTrackedRecord) {
-                        console.log(`DEBUG - After adding record ${idx}: byBandMonth=${aggregatedData.data[record.PremiumBand][record.Month]}, overall=${aggregatedData.totals.overall}`);
-                    }
+        }
+    };
+    
+    // Aggregate loan amounts for both raw and market-sized data
+    records.forEach((record, idx) => {
+        if (record.PremiumBand && record.Month) {
+            // Make sure the band and month exist in our structure
+            if (aggregatedData.data[record.PremiumBand] && 
+                months.includes(record.Month)) {
+                
+                // DEBUG: Track the first few records for detailed analysis
+                const isTrackedRecord = idx < 3;
+                if (isTrackedRecord) {
+                    console.log(`DEBUG - Aggregating record ${idx}: Loan=${record.Loan}, MarketSizedLoan=${record.MarketSizedLoan || record.Loan}, PremiumBand=${record.PremiumBand}, Month=${record.Month}`);
+                }
+                
+                // Get the loan amounts - use raw loan if market-sized is not available
+                const loanAmount = record.Loan || 0;
+                const marketSizedLoanAmount = record.MarketSizedLoan || loanAmount;
+                
+                // Aggregate raw data
+                aggregatedData.data[record.PremiumBand][record.Month] += loanAmount;
+                loanTracking.byBandMonth += loanAmount;
+                
+                aggregatedData.totals.byPremiumBand[record.PremiumBand] += loanAmount;
+                loanTracking.byPremiumBand += loanAmount;
+                
+                aggregatedData.totals.byMonth[record.Month] += loanAmount;
+                loanTracking.byMonth += loanAmount;
+                
+                aggregatedData.totals.overall += loanAmount;
+                loanTracking.overall += loanAmount;
+                
+                // Aggregate market-sized data
+                aggregatedData.marketSizedData[record.PremiumBand][record.Month] += marketSizedLoanAmount;
+                loanTracking.marketSized.byBandMonth += marketSizedLoanAmount;
+                
+                aggregatedData.marketSizedTotals.byPremiumBand[record.PremiumBand] += marketSizedLoanAmount;
+                loanTracking.marketSized.byPremiumBand += marketSizedLoanAmount;
+                
+                aggregatedData.marketSizedTotals.byMonth[record.Month] += marketSizedLoanAmount;
+                loanTracking.marketSized.byMonth += marketSizedLoanAmount;
+                
+                aggregatedData.marketSizedTotals.overall += marketSizedLoanAmount;
+                loanTracking.marketSized.overall += marketSizedLoanAmount;
+                
+                if (isTrackedRecord) {
+                    console.log(`DEBUG - After adding record ${idx}: byBandMonth=${aggregatedData.data[record.PremiumBand][record.Month]}, marketSized=${aggregatedData.marketSizedData[record.PremiumBand][record.Month]}, overall=${aggregatedData.totals.overall}, marketSizedOverall=${aggregatedData.marketSizedTotals.overall}`);
                 }
             }
-        });
-        
-        // DEBUG: Log the tracking totals to identify potential double-counting
-        console.log('DEBUG - Aggregation tracking totals:', {
+        }
+    });
+    
+    // DEBUG: Log the tracking totals to identify potential double-counting
+    console.log('DEBUG - Aggregation tracking totals:', {
+        raw: {
             byBandMonth: loanTracking.byBandMonth.toLocaleString(),
             byPremiumBand: loanTracking.byPremiumBand.toLocaleString(),
             byMonth: loanTracking.byMonth.toLocaleString(),
             overall: loanTracking.overall.toLocaleString()
-        });
-        
-        // DEBUG: Verify the overall total matches our expectation
-        console.log('DEBUG - Final aggregated overall total:', aggregatedData.totals.overall.toLocaleString());
-        
-        // DEBUG: Calculate sum of premium band totals as a verification
-        const sumOfBandTotals = Object.values(aggregatedData.totals.byPremiumBand).reduce((sum, val) => sum + val, 0);
-        console.log('DEBUG - Sum of all premium band totals:', sumOfBandTotals.toLocaleString());
-        
-        // DEBUG: Calculate sum of month totals as a verification
-        const sumOfMonthTotals = Object.values(aggregatedData.totals.byMonth).reduce((sum, val) => sum + val, 0);
-        console.log('DEBUG - Sum of all month totals:', sumOfMonthTotals.toLocaleString());
-        
-        // DEBUG: Check if these sums match the overall total
-        console.log('DEBUG - Do totals match?', {
+        },
+        marketSized: {
+            byBandMonth: loanTracking.marketSized.byBandMonth.toLocaleString(),
+            byPremiumBand: loanTracking.marketSized.byPremiumBand.toLocaleString(),
+            byMonth: loanTracking.marketSized.byMonth.toLocaleString(),
+            overall: loanTracking.marketSized.overall.toLocaleString()
+        }
+    });
+    
+    // DEBUG: Verify the overall total matches our expectation
+    console.log('DEBUG - Final aggregated overall total:', aggregatedData.totals.overall.toLocaleString());
+    console.log('DEBUG - Final aggregated market-sized total:', aggregatedData.marketSizedTotals.overall.toLocaleString());
+    
+    // DEBUG: Calculate sum of premium band totals as a verification
+    const sumOfBandTotals = Object.values(aggregatedData.totals.byPremiumBand).reduce((sum, val) => sum + val, 0);
+    const sumOfMarketSizedBandTotals = Object.values(aggregatedData.marketSizedTotals.byPremiumBand).reduce((sum, val) => sum + val, 0);
+    console.log('DEBUG - Sum of all premium band totals:', sumOfBandTotals.toLocaleString());
+    console.log('DEBUG - Sum of all market-sized premium band totals:', sumOfMarketSizedBandTotals.toLocaleString());
+    
+    // DEBUG: Calculate sum of month totals as a verification
+    const sumOfMonthTotals = Object.values(aggregatedData.totals.byMonth).reduce((sum, val) => sum + val, 0);
+    const sumOfMarketSizedMonthTotals = Object.values(aggregatedData.marketSizedTotals.byMonth).reduce((sum, val) => sum + val, 0);
+    console.log('DEBUG - Sum of all month totals:', sumOfMonthTotals.toLocaleString());
+    console.log('DEBUG - Sum of all market-sized month totals:', sumOfMarketSizedMonthTotals.toLocaleString());
+    
+    // DEBUG: Check if these sums match the overall total
+    console.log('DEBUG - Do totals match?', {
+        raw: {
             'overall === sumOfBandTotals': aggregatedData.totals.overall === sumOfBandTotals,
             'overall === sumOfMonthTotals': aggregatedData.totals.overall === sumOfMonthTotals,
             'difference (overall - bandTotals)': aggregatedData.totals.overall - sumOfBandTotals,
             'difference (overall - monthTotals)': aggregatedData.totals.overall - sumOfMonthTotals
-        });
-        
-        return aggregatedData;
+        },
+        marketSized: {
+            'overall === sumOfBandTotals': aggregatedData.marketSizedTotals.overall === sumOfMarketSizedBandTotals,
+            'overall === sumOfMonthTotals': aggregatedData.marketSizedTotals.overall === sumOfMarketSizedMonthTotals,
+            'difference (overall - bandTotals)': aggregatedData.marketSizedTotals.overall - sumOfMarketSizedBandTotals,
+            'difference (overall - monthTotals)': aggregatedData.marketSizedTotals.overall - sumOfMarketSizedMonthTotals
+        }
+    });
+    
+    return aggregatedData;
 }
 
 // Table Rendering Functions
@@ -1506,55 +1765,35 @@ function renderTable() {
         elements.resultsTable.innerHTML = '<div class="empty-state">No data available. Please check your filters or try uploading different data files.</div>';
         return;
     }
-        
-        // Prepare table data
-        const tableData = prepareTableData(currentAggregatedData);
-        
-        // DEBUG: Log the total amount being displayed in the table
-        if (tableData && tableData.length > 0) {
-            const totalRow = tableData.find(row => row.premiumBand === "Total");
-            if (totalRow) {
-                console.log('DEBUG - Total amount being displayed in table:', totalRow.total.toLocaleString());
-            }
+    
+    // Determine whether to use market-sized data
+    const useMarketSized = state.marketSizing && 
+                           state.marketSizing.enabled && 
+                           state.marketSizing.viewEnabled;
+    
+    console.log(`Rendering table with ${useMarketSized ? 'market-sized' : 'raw'} data`);
+    
+    // Prepare table data based on whether to use market-sized data
+    const tableData = prepareTableData(currentAggregatedData, useMarketSized);
+    
+    // DEBUG: Log the total amount being displayed in the table
+    if (tableData && tableData.length > 0) {
+        const totalRow = tableData.find(row => row.premiumBand === "Total");
+        if (totalRow) {
+            console.log(`DEBUG - Total amount being displayed in table (${useMarketSized ? 'market-sized' : 'raw'})`, totalRow.total.toLocaleString());
         }
-        
-        // Note about values being in millions removed as requested
-        
-        // Define table columns
-        const tableColumns = [
-            { title: "Premium Band (bps)", field: "premiumBand", headerSort: false, frozen: true }
-        ];
-        
-        // Add month columns
-        currentAggregatedData.months.forEach(month => {
-            tableColumns.push({
-                title: formatMonth(month),
-                field: month,
-                hozAlign: "right",
-                formatter: function(cell) {
-                    const value = cell.getValue();
-                    if (value === 0 || !value) return "£0.00m";
-                    const valueInMillions = (value / 1000000).toFixed(2);
-                    // Format the millions with commas
-                    const formattedValueInMillions = Number(valueInMillions).toLocaleString();
-                    return `£${formattedValueInMillions}m`;
-                },
-                formatterParams: {},
-                headerSort: false,
-                cellClick: function(e, cell) {
-                    const cellValue = cell.getValue();
-                    if (cellValue > 0) {
-                        // Could show detailed breakdown on click
-                        console.log(`Clicked on ${cell.getColumn().getField()} for ${cell.getRow().getData().premiumBand}`);
-                    }
-                }
-            });
-        });
-        
-        // Add total column
+    }
+    
+    // Define table columns
+    const tableColumns = [
+        { title: "Premium Band (bps)", field: "premiumBand", headerSort: false, frozen: true }
+    ];
+    
+    // Add month columns
+    currentAggregatedData.months.forEach(month => {
         tableColumns.push({
-            title: "Total",
-            field: "total",
+            title: formatMonth(month),
+            field: month,
             hozAlign: "right",
             formatter: function(cell) {
                 const value = cell.getValue();
@@ -1566,74 +1805,104 @@ function renderTable() {
             },
             formatterParams: {},
             headerSort: false,
-            // Use a custom bottomCalc function to prevent double-counting
-            // Instead of summing all values (which would include the Total row),
-            // we'll just return the value from the Total row directly
-            bottomCalc: function(values, data, calcParams) {
-                // Find the Total row
-                const totalRow = data.find(row => row.premiumBand === "Total");
-                // Return its total value directly
-                return totalRow ? totalRow.total : 0;
-            },
-            bottomCalcFormatter: function(cell) {
-                const value = cell.getValue();
-                if (value === 0 || !value) return "£0.00m";
-                const valueInMillions = (value / 1000000).toFixed(2);
-                // Format the millions with commas
-                const formattedValueInMillions = Number(valueInMillions).toLocaleString();
-                return `£${formattedValueInMillions}m`;
+            cellClick: function(e, cell) {
+                const cellValue = cell.getValue();
+                if (cellValue > 0) {
+                    // Could show detailed breakdown on click
+                    console.log(`Clicked on ${cell.getColumn().getField()} for ${cell.getRow().getData().premiumBand}`);
+                }
             }
         });
-
-        // Add % of Market column
-        tableColumns.push({
-            title: "% of Market",
-            field: "percentageOfMarket",
-            hozAlign: "right",
-            headerSort: false,
-            formatter: function(cell, formatterParams, onRendered){
-                const value = cell.getValue();
-                return (typeof value === 'number') ? value.toFixed(2) + '%' : 'N/A';
-            },
-            bottomCalc: function(values, data, calcParams) {
-                const totalRowData = data.find(d => d.premiumBand === "Total");
-                return totalRowData && typeof totalRowData.percentageOfMarket === 'number' ? totalRowData.percentageOfMarket : null;
-            },
-            bottomCalcFormatter: function(cell, formatterParams, onRendered){
-                const value = cell.getValue();
-                return (typeof value === 'number') ? value.toFixed(2) + '%' : 'N/A';
-            }
-        });
-        
-        // If table already exists, destroy it first
-        if (state.table) {
-            state.table.destroy();
+    });
+    
+    // Add total column
+    tableColumns.push({
+        title: "Total",
+        field: "total",
+        hozAlign: "right",
+        formatter: function(cell) {
+            const value = cell.getValue();
+            if (value === 0 || !value) return "£0.00m";
+            const valueInMillions = (value / 1000000).toFixed(2);
+            // Format the millions with commas
+            const formattedValueInMillions = Number(valueInMillions).toLocaleString();
+            return `£${formattedValueInMillions}m`;
+        },
+        formatterParams: {},
+        headerSort: false,
+        // Use a custom bottomCalc function to prevent double-counting
+        // Instead of summing all values (which would include the Total row),
+        // we'll just return the value from the Total row directly
+        bottomCalc: function(values, data, calcParams) {
+            // Find the Total row
+            const totalRow = data.find(row => row.premiumBand === "Total");
+            // Return its total value directly
+            return totalRow ? totalRow.total : 0;
+        },
+        bottomCalcFormatter: function(cell) {
+            const value = cell.getValue();
+            if (value === 0 || !value) return "£0.00m";
+            const valueInMillions = (value / 1000000).toFixed(2);
+            // Format the millions with commas
+            const formattedValueInMillions = Number(valueInMillions).toLocaleString();
+            return `£${formattedValueInMillions}m`;
         }
-        
-        // Initialize Tabulator
-        state.table = new Tabulator("#results-table", {
-            data: tableData,
-            columns: tableColumns,
-            layout: "fitColumns",
-            height: "450px",
-            rowFormatter: function(row) {
-                // Highlight total row
-                if (row.getData().premiumBand === "Total") {
-                    row.getElement().style.fontWeight = "bold";
-                    row.getElement().style.backgroundColor = "#eaecee";
-                }
-            },
-            dataFiltered: function(filters, rows) {
-                if (rows.length === 0) {
-                    console.log('No data matches the current filters');
-                }
-            }
-        });
+    });
+
+    // Add % of Market column
+    tableColumns.push({
+        title: "% of Market",
+        field: "percentageOfMarket",
+        hozAlign: "right",
+        headerSort: false,
+        formatter: function(cell, formatterParams, onRendered){
+            const value = cell.getValue();
+            return (typeof value === 'number') ? value.toFixed(2) + '%' : 'N/A';
+        },
+        bottomCalc: function(values, data, calcParams) {
+            const totalRowData = data.find(d => d.premiumBand === "Total");
+            return totalRowData && typeof totalRowData.percentageOfMarket === 'number' ? totalRowData.percentageOfMarket : null;
+        },
+        bottomCalcFormatter: function(cell, formatterParams, onRendered){
+            const value = cell.getValue();
+            return (typeof value === 'number') ? value.toFixed(2) + '%' : 'N/A';
+        }
+    });
+    
+    // If table already exists, destroy it first
+    if (state.table) {
+        state.table.destroy();
     }
+    
+    // Initialize Tabulator
+    state.table = new Tabulator("#results-table", {
+        data: tableData,
+        columns: tableColumns,
+        layout: "fitColumns",
+        height: "450px",
+        rowFormatter: function(row) {
+            // Highlight total row
+            if (row.getData().premiumBand === "Total") {
+                row.getElement().style.fontWeight = "bold";
+                row.getElement().style.backgroundColor = "#eaecee";
+            }
+        },
+        dataFiltered: function(filters, rows) {
+            if (rows.length === 0) {
+                console.log('No data matches the current filters');
+            }
+        }
+    });
+    
+    // Ensure the market sizing toggle is rendered if market sizing is enabled
+    if (state.marketSizing && state.marketSizing.enabled) {
+        renderMarketSizingToggle(true);
+    }
+}
 // End of renderTable function
 
 // Declare prepareTableData function
-function prepareTableData(currentProcessedData) {
+function prepareTableData(currentProcessedData, useMarketSized = false) {
     const tableData = [];
     
     // Calculate market totals based on current time, product, and purchase filters but without lender filter
@@ -1686,7 +1955,8 @@ function prepareTableData(currentProcessedData) {
         
         marketData.forEach(record => {
             const band = record.PremiumBand;
-            const loanAmount = record.Loan || 0;
+            // Use market-sized loan if available and requested, otherwise use raw loan
+            const loanAmount = useMarketSized && record.MarketSizedLoan ? record.MarketSizedLoan : (record.Loan || 0);
             
             if (band) {
                 marketTotals.byPremiumBand[band] = (marketTotals.byPremiumBand[band] || 0) + loanAmount;
@@ -1699,11 +1969,15 @@ function prepareTableData(currentProcessedData) {
     
     // Get market totals based on current filters
     const marketTotals = calculateMarketTotals();
-    console.log('Market totals based on current time/product/purchase filters:', marketTotals);
+    console.log(`Market totals based on current time/product/purchase filters (${useMarketSized ? 'market-sized' : 'raw'}):`, marketTotals);
     
     // Add rows for each premium band
     currentProcessedData.premiumBands.forEach(band => {
-        const filteredBandTotal = currentProcessedData.totals.byPremiumBand[band] || 0;
+        // Use market-sized data if requested and available
+        const filteredBandTotal = useMarketSized ? 
+            (currentProcessedData.marketSizedTotals.byPremiumBand[band] || 0) : 
+            (currentProcessedData.totals.byPremiumBand[band] || 0);
+            
         const marketBandTotal = marketTotals.byPremiumBand[band] || 0;
         
         // Calculate percentage - if "All Lenders" is selected, this should be 100%
@@ -1726,14 +2000,21 @@ function prepareTableData(currentProcessedData) {
         
         // Add data for each month
         currentProcessedData.months.forEach(month => {
-            rowData[month] = currentProcessedData.data[band]?.[month] || 0;
+            // Use market-sized data if requested and available
+            rowData[month] = useMarketSized ? 
+                (currentProcessedData.marketSizedData[band]?.[month] || 0) : 
+                (currentProcessedData.data[band]?.[month] || 0);
         });
         
         tableData.push(rowData);
     });
     
     // Add total row
-    const grandFilteredTotal = currentProcessedData.totals.overall || 0;
+    // Use market-sized totals if requested and available
+    const grandFilteredTotal = useMarketSized ? 
+        (currentProcessedData.marketSizedTotals.overall || 0) : 
+        (currentProcessedData.totals.overall || 0);
+        
     const grandMarketTotal = marketTotals.overall || 0;
     
     // Calculate total percentage - if "All Lenders" is selected, this should be 100%
@@ -1755,7 +2036,10 @@ function prepareTableData(currentProcessedData) {
     };
     
     currentProcessedData.months.forEach(month => {
-        totalRow[month] = currentProcessedData.totals.byMonth[month] || 0;
+        // Use market-sized data if requested and available
+        totalRow[month] = useMarketSized ? 
+            (currentProcessedData.marketSizedTotals.byMonth[month] || 0) : 
+            (currentProcessedData.totals.byMonth[month] || 0);
     });
     
     tableData.push(totalRow);
