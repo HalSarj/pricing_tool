@@ -227,6 +227,15 @@ function initializeApp() {
  * Updates the state with values from the UI and re-processes data if needed
  */
 function applyMarketSizingConfig() {
+    // Get previous state to see if it changed
+    const wasEnabled = state.marketSizing.enabled;
+    const previousConfig = {
+        totalMonthlyMarket: state.marketSizing.totalMonthlyMarket,
+        ltvFactorBelow80: state.marketSizing.ltvFactorBelow80,
+        ltvFactorAbove80: state.marketSizing.ltvFactorAbove80
+    };
+    
+    // Update state with new values
     state.marketSizing.enabled = elements.marketSizingToggle.checked;
     state.marketSizing.totalMonthlyMarket = parseFloat(elements.totalMonthlyMarket.value);
     state.marketSizing.ltvFactorBelow80 = parseFloat(elements.ltvFactorBelow80.value);
@@ -234,16 +243,25 @@ function applyMarketSizingConfig() {
     
     console.log('Market sizing configuration updated:', state.marketSizing);
     
-    // Update UI to reflect the current market sizing state
-    if (state.marketSizing.enabled) {
-        renderMarketSizingToggle(true);
-    } else {
-        renderMarketSizingToggle(false);
-    }
+    // Check if configuration changed significantly enough to require reprocessing
+    const configChanged = 
+        state.marketSizing.totalMonthlyMarket !== previousConfig.totalMonthlyMarket ||
+        state.marketSizing.ltvFactorBelow80 !== previousConfig.ltvFactorBelow80 ||
+        state.marketSizing.ltvFactorAbove80 !== previousConfig.ltvFactorAbove80;
     
-    // Re-process data with the new market sizing configuration
-    if (state.esisData && state.esisData.length > 0) {
-        processData();
+    // If market sizing was toggled on/off or config changed, we need to reprocess data
+    if (wasEnabled !== state.marketSizing.enabled || (state.marketSizing.enabled && configChanged)) {
+        // Show loading indicator
+        showLoading(true);
+        
+        // Re-process data with the new market sizing configuration
+        if (state.esisData && state.esisData.length > 0) {
+            // We need to reprocess the entire dataset
+            processData();
+        }
+    } else {
+        // Just update the visualization toggle if only the view was toggled
+        renderMarketSizingToggle(state.marketSizing.enabled);
     }
 }
 
@@ -260,93 +278,303 @@ function renderMarketSizingToggle(visible) {
         toggleContainer.id = 'market-sizing-toggle-container';
         toggleContainer.className = 'market-sizing-toggle-container';
         
-        // Add a label
-        const label = document.createElement('label');
-        label.textContent = 'View Market-Sized Data:';
-        label.htmlFor = 'view-market-sized';
+        // Add a toggle switch with improved styling
+        toggleContainer.innerHTML = `
+            <div class="toggle-card">
+                <div class="toggle-header">
+                    <h3>Market Sizing Data View</h3>
+                    <span class="toggle-status">Currently viewing: <span id="toggle-status-text">Raw Data</span></span>
+                </div>
+                <div class="toggle-body">
+                    <p>Switch between raw ESIS data and market-sized data calculated using your configured factors.</p>
+                    <div class="toggle-controls">
+                        <label class="switch">
+                            <input type="checkbox" id="view-market-sized">
+                            <span class="slider round"></span>
+                        </label>
+                        <span class="toggle-label">View Market-Sized Data</span>
+                    </div>
+                </div>
+            </div>
+        `;
         
-        // Create the toggle switch
-        const toggle = document.createElement('input');
-        toggle.type = 'checkbox';
-        toggle.id = 'view-market-sized';
-        toggle.checked = state.marketSizing && state.marketSizing.enabled;
-        
-        // Add event listener
-        toggle.addEventListener('change', function() {
-            // Update all visualizations to use market-sized data if checked
-            if (state.marketSizing) {
-                state.marketSizing.viewEnabled = this.checked;
-                
-                // Update all visualizations to use market-sized data
-                if (state.processedData) {
-                    renderTable();
-                    
-                    // Update other visualizations too if needed
-                    if (state.lenderMarketShareData) {
-                        updateMarketShareTable();
-                    }
-                    
-                    updateHeatmap();
-                    
-                    // Update market share trends chart if it exists
-                    if (state.marketShareTrends && state.marketShareTrends.selectedPremiumBands) {
-                        updateMarketShareTrendsChart();
-                    }
-                }
-                
-                console.log(`Market-sized view ${this.checked ? 'enabled' : 'disabled'}`);
-            }
-        });
-        
-        // Add to the DOM
-        toggleContainer.appendChild(label);
-        toggleContainer.appendChild(toggle);
-        
-        // Try to insert before results-table
-        const resultsTable = document.getElementById('results-table');
-        if (resultsTable && resultsTable.parentNode) {
-            resultsTable.parentNode.insertBefore(toggleContainer, resultsTable);
-        } else {
-            // Fallback to adding at the end of results-section
-            const resultsSection = document.getElementById('results-section');
-            if (resultsSection) {
-                resultsSection.appendChild(toggleContainer);
-            }
-        }
-        
-        // Add CSS styles
+        // Create styles for the toggle
         const style = document.createElement('style');
         style.textContent = `
             .market-sizing-toggle-container {
-                margin: 10px 0;
-                padding: 8px;
+                margin: 20px 0;
+                padding: 0;
+            }
+            
+            .toggle-card {
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                overflow: hidden;
+                background-color: #fff;
+            }
+            
+            .toggle-header {
+                padding: 12px 15px;
                 background-color: #f0f8ff;
-                border-radius: 4px;
+                border-bottom: 1px solid #e0e0e0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            
+            .toggle-header h3 {
+                margin: 0;
+                font-size: 1.1rem;
+                color: #333;
+            }
+            
+            .toggle-status {
+                font-size: 0.9rem;
+                color: #666;
+            }
+            
+            .toggle-body {
+                padding: 15px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+            
+            .toggle-body p {
+                margin: 0 0 10px 0;
+                font-size: 0.9rem;
+                color: #666;
+                flex-basis: 100%;
+            }
+            
+            .toggle-controls {
                 display: flex;
                 align-items: center;
-                justify-content: flex-end;
+                margin-left: auto;
             }
             
-            .market-sizing-toggle-container label {
-                margin-right: 10px;
+            .toggle-label {
+                margin-left: 10px;
                 font-weight: bold;
+                color: #333;
             }
             
-            .market-sizing-toggle-container input[type="checkbox"] {
-                width: 18px;
-                height: 18px;
+            /* Switch styling */
+            .switch {
+                position: relative;
+                display: inline-block;
+                width: 50px;
+                height: 24px;
+            }
+            
+            .switch input {
+                opacity: 0;
+                width: 0;
+                height: 0;
+            }
+            
+            .slider {
+                position: absolute;
+                cursor: pointer;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background-color: #ccc;
+                transition: .4s;
+            }
+            
+            .slider:before {
+                position: absolute;
+                content: "";
+                height: 16px;
+                width: 16px;
+                left: 4px;
+                bottom: 4px;
+                background-color: white;
+                transition: .4s;
+            }
+            
+            input:checked + .slider {
+                background-color: #2196F3;
+            }
+            
+            input:focus + .slider {
+                box-shadow: 0 0 1px #2196F3;
+            }
+            
+            input:checked + .slider:before {
+                transform: translateX(26px);
+            }
+            
+            .slider.round {
+                border-radius: 24px;
+            }
+            
+            .slider.round:before {
+                border-radius: 50%;
             }
         `;
         document.head.appendChild(style);
+        
+        // Try to insert at the top of the results section
+        const resultsSection = document.getElementById('results-section');
+        if (resultsSection) {
+            resultsSection.insertBefore(toggleContainer, resultsSection.firstChild);
+        } else {
+            // Fallback to anywhere it can be placed
+            const container = document.querySelector('.container') || document.body;
+            container.appendChild(toggleContainer);
+        }
+        
+        // Get the checkbox and add event listener
+        const checkbox = document.getElementById('view-market-sized');
+        if (checkbox) {
+            checkbox.checked = state.marketSizing && state.marketSizing.viewEnabled;
+            
+            checkbox.addEventListener('change', function() {
+                // Update state
+                if (state.marketSizing) {
+                    state.marketSizing.viewEnabled = this.checked;
+                    
+                    // Update status text
+                    const statusText = document.getElementById('toggle-status-text');
+                    if (statusText) {
+                        statusText.textContent = this.checked ? 'Market-Sized Data' : 'Raw Data';
+                    }
+                    
+                    // Update all visualizations
+                    updateAllVisualizations();
+                    
+                    // Update data source indicators
+                    updateDataSourceIndicators();
+                    
+                    console.log(`Market-sized view ${this.checked ? 'enabled' : 'disabled'}`);
+                }
+            });
+        }
+    } else {
+        // Just update the checkbox state if the toggle already exists
+        const checkbox = document.getElementById('view-market-sized');
+        if (checkbox) {
+            checkbox.checked = state.marketSizing && state.marketSizing.viewEnabled;
+        }
+        
+        // Update status text
+        const statusText = document.getElementById('toggle-status-text');
+        if (statusText) {
+            statusText.textContent = (state.marketSizing && state.marketSizing.viewEnabled) ? 
+                'Market-Sized Data' : 'Raw Data';
+        }
     }
     
     // Show or hide the toggle based on whether market sizing is enabled
-    toggleContainer.style.display = visible ? 'flex' : 'none';
+    toggleContainer.style.display = visible ? 'block' : 'none';
     
     // Add element reference for future access
     if (!elements.viewMarketSized) {
         elements.viewMarketSized = document.getElementById('view-market-sized');
     }
+    
+    // Update data source indicators
+    updateDataSourceIndicators();
+}
+
+/**
+ * Updates all visualizations to reflect current market sizing settings
+ */
+function updateAllVisualizations() {
+    // Update the main table
+    if (state.processedData) {
+        renderTable();
+    }
+    
+    // Update market share table
+    if (state.lenderMarketShareData) {
+        updateMarketShareTable();
+    }
+    
+    // Update heatmap
+    updateHeatmap();
+    
+    // Update market share trends chart if it exists
+    if (state.marketShareTrends && state.marketShareTrends.selectedPremiumBands) {
+        updateMarketShareTrendsChart();
+    }
+    
+    console.log('All visualizations updated to use ' + 
+        (state.marketSizing && state.marketSizing.viewEnabled ? 'market-sized' : 'raw') + 
+        ' data');
+}
+
+/**
+ * Adds data source indicators to all visualizations
+ */
+function updateDataSourceIndicators() {
+    // Get current state
+    const useMarketSized = state.marketSizing && 
+                           state.marketSizing.enabled && 
+                           state.marketSizing.viewEnabled;
+    
+    // Define sections to add indicators to
+    const sections = [
+        { id: 'results-section', label: 'Premium Band Distribution' },
+        { id: 'market-share-section', label: 'Lender Market Share' },
+        { id: 'heatmap-section', label: 'Market Distribution Heatmap' },
+        { id: 'market-share-trends-section', label: 'Market Share Trends' }
+    ];
+    
+    // Update or add indicators for each section
+    sections.forEach(section => {
+        const sectionElement = document.getElementById(section.id);
+        if (!sectionElement) return;
+        
+        // Look for existing indicator
+        let indicator = sectionElement.querySelector('.data-source-indicator');
+        
+        if (!indicator) {
+            // Create new indicator
+            indicator = document.createElement('div');
+            indicator.className = 'data-source-indicator';
+            
+            // Add CSS for the indicator
+            indicator.style.padding = '5px 10px';
+            indicator.style.margin = '5px 0 15px 0';
+            indicator.style.borderRadius = '4px';
+            indicator.style.fontWeight = 'bold';
+            indicator.style.fontSize = '0.9rem';
+            indicator.style.display = 'inline-block';
+            
+            // Insert after the section header (h2)
+            const header = sectionElement.querySelector('h2');
+            if (header && header.nextSibling) {
+                sectionElement.insertBefore(indicator, header.nextSibling);
+            } else {
+                // Fallback to beginning of section
+                sectionElement.insertBefore(indicator, sectionElement.firstChild);
+            }
+        }
+        
+        // Update indicator text and style
+        if (useMarketSized) {
+            indicator.textContent = `Data Source: Market-Sized (${section.label})`;
+            indicator.style.backgroundColor = '#e6f7ff';
+            indicator.style.color = '#0066cc';
+            indicator.style.border = '1px solid #0066cc';
+        } else {
+            indicator.textContent = `Data Source: Raw (${section.label})`;
+            indicator.style.backgroundColor = '#f9f9f9';
+            indicator.style.color = '#666666';
+            indicator.style.border = '1px solid #cccccc';
+        }
+        
+        // Ensure indicator is visible
+        indicator.style.display = 'inline-block';
+    });
+    
+    console.log(`Updated data source indicators: ${useMarketSized ? 'Market-Sized' : 'Raw'}`);
 }
 
 // Apply error handling wrappers to critical functions
