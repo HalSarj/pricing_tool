@@ -2991,14 +2991,25 @@ function aggregateLenderMarketShare(selectedBands) {
     // Restore original premium range
     state.filters.premiumRange = originalPremiumRange;
     
+    // Determine whether to use market-sized data
+    const useMarketSized = state.marketSizing && 
+                          state.marketSizing.enabled && 
+                          state.marketSizing.viewEnabled;
+    
+    console.log(`Market Share Analysis: Using ${useMarketSized ? 'market-sized' : 'raw'} loan amounts`);
+    
     // DIAGNOSTIC: Check for 500-520 band records in the filtered data
     const highPremiumRecords = filtered.filter(item => item.PremiumBand === '500-520');
     console.log(`DIAGNOSTIC - aggregateLenderMarketShare: Records in 500-520 band after filtering: ${highPremiumRecords.length}`);
     
     if (highPremiumRecords.length > 0) {
         // Calculate total loan amount in this band
-        const totalLoanAmount = highPremiumRecords.reduce((sum, record) => sum + (record.Loan || 0), 0);
-        console.log(`DIAGNOSTIC - aggregateLenderMarketShare: Total loan amount in 500-520 band: £${totalLoanAmount.toLocaleString()}`);
+        const totalLoanAmount = highPremiumRecords.reduce((sum, record) => {
+            const amount = useMarketSized && record.MarketSizedLoan ? 
+                record.MarketSizedLoan : (record.Loan || 0);
+            return sum + amount;
+        }, 0);
+        console.log(`DIAGNOSTIC - aggregateLenderMarketShare: Total ${useMarketSized ? 'market-sized' : 'raw'} loan amount in 500-520 band: £${totalLoanAmount.toLocaleString()}`);
     }
     
     // DIAGNOSTIC: Check if 500-520 band is in the selected bands
@@ -3049,6 +3060,7 @@ function aggregateLenderMarketShare(selectedBands) {
                 Provider: r.Provider,
                 BaseLender: r.BaseLender,
                 Loan: r.Loan,
+                MarketSizedLoan: r.MarketSizedLoan || 'N/A',
                 PremiumBand: r.PremiumBand
             });
         }
@@ -3056,7 +3068,10 @@ function aggregateLenderMarketShare(selectedBands) {
         // Make sure we're processing records for all the selected bands
         // This is the critical fix - ensure we're checking the band is in selectedBands
         if (lender && selectedBands.includes(band)) {
-            const loanAmount = r.Loan || 0;
+            // Use market-sized loan if available and requested, otherwise use raw loan
+            const loanAmount = useMarketSized && r.MarketSizedLoan ? 
+                r.MarketSizedLoan : (r.Loan || 0);
+                
             lenderData[lender][band] += loanAmount;
             bandTotals[band] += loanAmount;
             
@@ -3159,6 +3174,9 @@ function aggregateLenderMarketShare(selectedBands) {
     summary.Total_above80 = overallTotal_above80;
     summary.Total_above80_pct = 100;
     
+    // Add a flag to indicate whether market-sized data was used
+    summary.usedMarketSized = useMarketSized;
+    
     return {
         lenders,
         lenderData,
@@ -3166,7 +3184,8 @@ function aggregateLenderMarketShare(selectedBands) {
         overallTotal,
         overallTotal_below80,
         overallTotal_above80,
-        summary
+        summary,
+        usedMarketSized // Add flag to return object as well
     };
 }
 
@@ -3741,6 +3760,13 @@ function exportMarketShareData() {
 
 // --- HEATMAP: Data Processing Function ---
 function prepareHeatmapData(filteredData) {
+    // Determine whether to use market-sized data
+    const useMarketSized = state.marketSizing && 
+                          state.marketSizing.enabled && 
+                          state.marketSizing.viewEnabled;
+    
+    console.log(`Heatmap: Using ${useMarketSized ? 'market-sized' : 'raw'} loan amounts`);
+    
     // Get unique lenders and premium bands
     const lenders = [...new Set(filteredData.map(r => r.BaseLender || r.Provider))].sort();
     
@@ -3757,7 +3783,8 @@ function prepareHeatmapData(filteredData) {
         lenders: lenders,
         premiumBands: premiumBands,
         lenderMode: {}, // Lender-centric view
-        premiumMode: {}  // Premium-centric view
+        premiumMode: {},  // Premium-centric view
+        usedMarketSized: useMarketSized // Add flag to track data source
     };
     
     // Create empty data structure
@@ -3779,7 +3806,9 @@ function prepareHeatmapData(filteredData) {
     filteredData.forEach(record => {
         const lender = record.BaseLender || record.Provider;
         const band = record.PremiumBand;
-        const loanAmount = record.Loan || 0;
+        // Use market-sized loan if available and requested, otherwise use raw loan
+        const loanAmount = useMarketSized && record.MarketSizedLoan ? 
+            record.MarketSizedLoan : (record.Loan || 0);
         
         if (lender && band && lenders.includes(lender) && premiumBands.includes(band)) {
             heatmapData.lenderMode[lender][band] += loanAmount;
@@ -4104,6 +4133,39 @@ function updateHeatmap() {
             
             // Re-attach event listeners to radio buttons
             attachHeatmapModeListeners();
+            
+            // After the heatmap is rendered, add an indicator for market-sized data
+            if (state.marketSizing && state.marketSizing.enabled && state.marketSizing.viewEnabled) {
+                const heatmapVisualization = document.getElementById('heatmap-visualization');
+                if (heatmapVisualization) {
+                    // Check if indicator already exists
+                    let indicator = heatmapVisualization.querySelector('.market-sized-indicator');
+                    if (!indicator) {
+                        indicator = document.createElement('div');
+                        indicator.className = 'market-sized-indicator';
+                        indicator.textContent = 'Showing Market-Sized Data';
+                        indicator.style.padding = '5px';
+                        indicator.style.backgroundColor = '#f0f8ff';
+                        indicator.style.borderRadius = '4px';
+                        indicator.style.marginBottom = '10px';
+                        indicator.style.fontWeight = 'bold';
+                        indicator.style.textAlign = 'center';
+                        
+                        // Add to the top of the visualization
+                        if (heatmapVisualization.firstChild) {
+                            heatmapVisualization.insertBefore(indicator, heatmapVisualization.firstChild);
+                        } else {
+                            heatmapVisualization.appendChild(indicator);
+                        }
+                    }
+                }
+            } else {
+                // Remove indicator if market-sized data is not being shown
+                const indicator = document.querySelector('.market-sized-indicator');
+                if (indicator) {
+                    indicator.remove();
+                }
+            }
             
             console.log('Heatmap updated successfully');
         }, 10);
@@ -4688,6 +4750,13 @@ function processMarketShareTrendsData(filteredData, selectedBands) {
 
 // Group data by month and lender for the trends chart
 function groupByMonthAndLender(data) {
+    // Determine whether to use market-sized data
+    const useMarketSized = state.marketSizing && 
+                          state.marketSizing.enabled && 
+                          state.marketSizing.viewEnabled;
+    
+    console.log(`Market Share Trends: Using ${useMarketSized ? 'market-sized' : 'raw'} loan amounts`);
+    
     // Initialize result structure
     const result = {};
     
@@ -4747,15 +4816,16 @@ function groupByMonthAndLender(data) {
             });
         }
         
-        // Add loan amount to lender's total for this month
-        const loan = record.Loan || 0;
+        // Use market-sized loan if available and requested, otherwise use raw loan
+        const loanAmount = useMarketSized && record.MarketSizedLoan ? 
+            record.MarketSizedLoan : (record.Loan || 0);
         
         if (!result[monthKey].lenders[lender]) {
             result[monthKey].lenders[lender] = 0;
         }
         
-        result[monthKey].lenders[lender] += loan;
-        result[monthKey].total += loan;
+        result[monthKey].lenders[lender] += loanAmount;
+        result[monthKey].total += loanAmount;
     });
     
     // Sort months chronologically
@@ -4780,7 +4850,8 @@ function groupByMonthAndLender(data) {
     return {
         months: months.map(m => m.key),
         monthLabels: months.map(m => m.label),
-        data: result
+        data: result,
+        usedMarketSized: useMarketSized // Add flag to track data source
     };
 }
 
