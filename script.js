@@ -2334,6 +2334,8 @@ function applyFilters(data, options = {}) {
                         return false;
                     } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
                         return false;
+                    } else if (state.filters.ltvRange === 'above-90' && ltv <= 90) {
+                        return false;
                     }
                 }
             }
@@ -2474,7 +2476,7 @@ function testOptimization() {
         premiumRange: [0, 500],
         productTypes: [],
         purchaseTypes: [],
-        ltvRange: 'all'
+        ltvRange: 'all' // 'all', 'below-80', 'above-80', or 'above-90' 'all'
     };
     
     // Run the test
@@ -4321,11 +4323,13 @@ function updateMarketShareTrendsChart() {
             // Apply LTV filter
             let ltvFilterPassed = true;
             if (state.filters.ltvRange && state.filters.ltvRange !== 'all') {
-                const ltv = parseFloat(record.LTV);
-                if (!isNaN(ltv)) {
+                let ltv = record.StandardizedLTV;
+                if (ltv !== undefined && ltv !== null && !isNaN(ltv)) {
                     if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
                         ltvFilterPassed = false;
                     } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                        ltvFilterPassed = false;
+                    } else if (state.filters.ltvRange === 'above-90' && ltv <= 90) {
                         ltvFilterPassed = false;
                     }
                 }
@@ -5091,6 +5095,8 @@ function testFilterImplementation(testData, testFilters) {
                     if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
                         return false;
                     } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                        return false;
+                    } else if (state.filters.ltvRange === 'above-90' && ltv <= 90) {
                         return false;
                     }
                 }
