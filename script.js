@@ -229,6 +229,7 @@ function initializeApp() {
 function applyMarketSizingConfig() {
     // Get previous state to see if it changed
     const wasEnabled = state.marketSizing.enabled;
+    const wasViewEnabled = state.marketSizing.viewEnabled;
     const previousConfig = {
         totalMonthlyMarket: state.marketSizing.totalMonthlyMarket,
         ltvFactorBelow80: state.marketSizing.ltvFactorBelow80,
@@ -241,13 +242,44 @@ function applyMarketSizingConfig() {
     state.marketSizing.ltvFactorBelow80 = parseFloat(elements.ltvFactorBelow80.value);
     state.marketSizing.ltvFactorAbove80 = parseFloat(elements.ltvFactorAbove80.value);
     
-    console.log('Market sizing configuration updated:', state.marketSizing);
+    // When market sizing is first enabled, also enable the view by default
+    if (state.marketSizing.enabled && !wasEnabled) {
+        state.marketSizing.viewEnabled = true;
+    }
+    
+    // Add element reference for future access
+    if (!elements.viewMarketSized) {
+        elements.viewMarketSized = document.getElementById('view-market-sized');
+    }
+    
+    // Update UI to reflect current state
+    const configSection = document.getElementById('market-sizing-config');
+    if (configSection) {
+        configSection.classList.toggle('disabled', !state.marketSizing.enabled);
+    }
+    
+    if (elements.viewMarketSized) {
+        elements.viewMarketSized.disabled = !state.marketSizing.enabled;
+        elements.viewMarketSized.textContent = state.marketSizing.viewEnabled ? 
+            'View Raw Data' : 'View Market-Sized Data';
+    }
+    
+    console.log('Market sizing configuration updated:', {
+        enabled: state.marketSizing.enabled,
+        viewEnabled: state.marketSizing.viewEnabled,
+        totalMonthlyMarket: state.marketSizing.totalMonthlyMarket,
+        ltvFactorBelow80: state.marketSizing.ltvFactorBelow80,
+        ltvFactorAbove80: state.marketSizing.ltvFactorAbove80
+    });
     
     // Check if configuration changed significantly enough to require reprocessing
     const configChanged = 
         state.marketSizing.totalMonthlyMarket !== previousConfig.totalMonthlyMarket ||
         state.marketSizing.ltvFactorBelow80 !== previousConfig.ltvFactorBelow80 ||
         state.marketSizing.ltvFactorAbove80 !== previousConfig.ltvFactorAbove80;
+    
+    // Force refresh of cached filtered data
+    invalidateFilterCache();
     
     // If market sizing was toggled on/off or config changed, we need to reprocess data
     if (wasEnabled !== state.marketSizing.enabled || (state.marketSizing.enabled && configChanged)) {
@@ -259,6 +291,9 @@ function applyMarketSizingConfig() {
             // We need to reprocess the entire dataset
             processData();
         }
+    } else if (wasViewEnabled !== state.marketSizing.viewEnabled) {
+        // If only the view toggle changed, update all visualizations
+        updateAllVisualizations();
     } else {
         // Just update the visualization toggle if only the view was toggled
         renderMarketSizingToggle(state.marketSizing.enabled);
@@ -435,24 +470,8 @@ function renderMarketSizingToggle(visible) {
             checkbox.checked = state.marketSizing && state.marketSizing.viewEnabled;
             
             checkbox.addEventListener('change', function() {
-                // Update state
-                if (state.marketSizing) {
-                    state.marketSizing.viewEnabled = this.checked;
-                    
-                    // Update status text
-                    const statusText = document.getElementById('toggle-status-text');
-                    if (statusText) {
-                        statusText.textContent = this.checked ? 'Market-Sized Data' : 'Raw Data';
-                    }
-                    
-                    // Update all visualizations
-                    updateAllVisualizations();
-                    
-                    // Update data source indicators
-                    updateDataSourceIndicators();
-                    
-                    console.log(`Market-sized view ${this.checked ? 'enabled' : 'disabled'}`);
-                }
+                // Call the toggle function with the new state
+                toggleMarketSizingView(this.checked);
             });
         }
     } else {
@@ -486,27 +505,141 @@ function renderMarketSizingToggle(visible) {
  * Updates all visualizations to reflect current market sizing settings
  */
 function updateAllVisualizations() {
+    console.log('Updating all visualizations...');
+    
+    // Make sure we have ESIS data to work with
+    if (!state.esisData || !Array.isArray(state.esisData)) {
+        console.error('Cannot update visualizations: ESIS data is not available');
+        return;
+    }
+    
+    // Enhanced logging for market sizing state
+    const useMarketSized = shouldUseMarketSized();
+                          
+    console.log('Updating all visualizations with market sizing:', {
+        enabled: state.marketSizing?.enabled,
+        viewEnabled: state.marketSizing?.viewEnabled,
+        useMarketSized: useMarketSized
+    });
+    
+    // Force refresh of cached filtered data to ensure we're using the latest settings
+    invalidateFilterCache();
+    
     // Update the main table
     if (state.processedData) {
+        console.log('Updating main table with market sizing:', useMarketSized);
         renderTable();
     }
     
     // Update market share table
-    if (state.lenderMarketShareData) {
+    if (state.lenderMarketShare && state.lenderMarketShare.selectedPremiumBands && 
+        state.lenderMarketShare.selectedPremiumBands.length > 0) {
+        console.log('Updating market share table with market sizing:', useMarketSized);
         updateMarketShareTable();
+    } else {
+        console.log('Skipping market share table update - no selected premium bands');
+        // If there are no selected premium bands but we have a default band, select it
+        if (document.querySelector('#premium-bands-container .premium-band-chip')) {
+            const defaultBand = '80-100'; // Choose a sensible default
+            const chip = document.querySelector(`#premium-bands-container .premium-band-chip[data-band="${defaultBand}"]`);
+            if (chip) {
+                chip.classList.add('selected');
+                if (!state.lenderMarketShare) state.lenderMarketShare = {};
+                state.lenderMarketShare.selectedPremiumBands = [defaultBand];
+                console.log(`Selected default premium band: ${defaultBand}`);
+                updateMarketShareTable();
+            }
+        }
     }
     
     // Update heatmap
+    console.log('Updating heatmap with market sizing:', useMarketSized);
     updateHeatmap();
     
     // Update market share trends chart if it exists
-    if (state.marketShareTrends && state.marketShareTrends.selectedPremiumBands) {
+    if (state.marketShareTrends && state.marketShareTrends.selectedPremiumBands && 
+        state.marketShareTrends.selectedPremiumBands.length > 0) {
+        console.log('Updating market share trends chart with market sizing:', useMarketSized);
         updateMarketShareTrendsChart();
+    } else {
+        console.log('Skipping market share trends chart update - no selected premium bands');
+        // If there are no selected premium bands but we have a default band, select it
+        if (document.querySelector('#trends-premium-bands-container .premium-band-chip')) {
+            const defaultBand = '80-100'; // Choose a sensible default
+            const chip = document.querySelector(`#trends-premium-bands-container .premium-band-chip[data-band="${defaultBand}"]`);
+            if (chip) {
+                chip.classList.add('selected');
+                if (!state.marketShareTrends) state.marketShareTrends = {};
+                state.marketShareTrends.selectedPremiumBands = [defaultBand];
+                console.log(`Selected default premium band for trends: ${defaultBand}`);
+                updateMarketShareTrendsChart();
+            }
+        }
     }
     
+    // Update all data source indicators
+    updateDataSourceIndicators();
+    
     console.log('All visualizations updated to use ' + 
-        (state.marketSizing && state.marketSizing.viewEnabled ? 'market-sized' : 'raw') + 
+        (useMarketSized ? 'market-sized' : 'raw') + 
         ' data');
+}
+
+/**
+ * Updates a data source indicator for a specific section
+ * @param {string} sectionSelector - CSS selector for the section
+ * @param {boolean} useMarketSized - Whether market-sized data is being used
+ */
+function updateDataSourceIndicator(sectionSelector, useMarketSized) {
+    const sectionElement = document.querySelector(sectionSelector);
+    if (!sectionElement) return;
+    
+    // Get section label from the heading
+    const header = sectionElement.querySelector('h2');
+    const sectionLabel = header ? header.textContent : sectionSelector.replace('#', '');
+    
+    // Look for existing indicator
+    let indicator = sectionElement.querySelector('.data-source-indicator');
+    
+    if (!indicator) {
+        // Create new indicator
+        indicator = document.createElement('div');
+        indicator.className = 'data-source-indicator';
+        
+        // Add CSS for the indicator
+        indicator.style.padding = '5px 10px';
+        indicator.style.margin = '5px 0 15px 0';
+        indicator.style.borderRadius = '4px';
+        indicator.style.fontWeight = 'bold';
+        indicator.style.fontSize = '0.9rem';
+        indicator.style.display = 'inline-block';
+        
+        // Insert after the section header (h2)
+        if (header && header.nextSibling) {
+            sectionElement.insertBefore(indicator, header.nextSibling);
+        } else {
+            // Fallback to beginning of section
+            sectionElement.insertBefore(indicator, sectionElement.firstChild);
+        }
+    }
+    
+    // Update indicator text and style
+    if (useMarketSized) {
+        indicator.textContent = `Data Source: Market-Sized (${sectionLabel})`;
+        indicator.style.backgroundColor = '#e6f7ff';
+        indicator.style.color = '#0066cc';
+        indicator.style.border = '1px solid #0066cc';
+    } else {
+        indicator.textContent = `Data Source: Raw (${sectionLabel})`;
+        indicator.style.backgroundColor = '#f9f9f9';
+        indicator.style.color = '#666666';
+        indicator.style.border = '1px solid #cccccc';
+    }
+    
+    // Ensure indicator is visible
+    indicator.style.display = 'inline-block';
+    
+    console.log(`Updated data source indicator for ${sectionLabel}: ${useMarketSized ? 'Market-Sized' : 'Raw'}`);
 }
 
 /**
@@ -514,67 +647,22 @@ function updateAllVisualizations() {
  */
 function updateDataSourceIndicators() {
     // Get current state
-    const useMarketSized = state.marketSizing && 
-                           state.marketSizing.enabled && 
-                           state.marketSizing.viewEnabled;
+    const useMarketSized = shouldUseMarketSized();
     
-    // Define sections to add indicators to
+    // Define sections to update
     const sections = [
-        { id: 'results-section', label: 'Premium Band Distribution' },
-        { id: 'market-share-section', label: 'Lender Market Share' },
-        { id: 'heatmap-section', label: 'Market Distribution Heatmap' },
-        { id: 'market-share-trends-section', label: 'Market Share Trends' }
+        '#results-section',
+        '#market-share-section',
+        '#heatmap-section',
+        '#market-share-trends-section'
     ];
     
-    // Update or add indicators for each section
-    sections.forEach(section => {
-        const sectionElement = document.getElementById(section.id);
-        if (!sectionElement) return;
-        
-        // Look for existing indicator
-        let indicator = sectionElement.querySelector('.data-source-indicator');
-        
-        if (!indicator) {
-            // Create new indicator
-            indicator = document.createElement('div');
-            indicator.className = 'data-source-indicator';
-            
-            // Add CSS for the indicator
-            indicator.style.padding = '5px 10px';
-            indicator.style.margin = '5px 0 15px 0';
-            indicator.style.borderRadius = '4px';
-            indicator.style.fontWeight = 'bold';
-            indicator.style.fontSize = '0.9rem';
-            indicator.style.display = 'inline-block';
-            
-            // Insert after the section header (h2)
-            const header = sectionElement.querySelector('h2');
-            if (header && header.nextSibling) {
-                sectionElement.insertBefore(indicator, header.nextSibling);
-            } else {
-                // Fallback to beginning of section
-                sectionElement.insertBefore(indicator, sectionElement.firstChild);
-            }
-        }
-        
-        // Update indicator text and style
-        if (useMarketSized) {
-            indicator.textContent = `Data Source: Market-Sized (${section.label})`;
-            indicator.style.backgroundColor = '#e6f7ff';
-            indicator.style.color = '#0066cc';
-            indicator.style.border = '1px solid #0066cc';
-        } else {
-            indicator.textContent = `Data Source: Raw (${section.label})`;
-            indicator.style.backgroundColor = '#f9f9f9';
-            indicator.style.color = '#666666';
-            indicator.style.border = '1px solid #cccccc';
-        }
-        
-        // Ensure indicator is visible
-        indicator.style.display = 'inline-block';
+    // Update indicators for each section
+    sections.forEach(sectionSelector => {
+        updateDataSourceIndicator(sectionSelector, useMarketSized);
     });
     
-    console.log(`Updated data source indicators: ${useMarketSized ? 'Market-Sized' : 'Raw'}`);
+    console.log(`Updated all data source indicators: ${useMarketSized ? 'Market-Sized' : 'Raw'}`);
 }
 
 // Apply error handling wrappers to critical functions
@@ -1994,10 +2082,8 @@ function renderTable() {
         return;
     }
     
-    // Determine whether to use market-sized data
-    const useMarketSized = state.marketSizing && 
-                           state.marketSizing.enabled && 
-                           state.marketSizing.viewEnabled;
+    // We already have the useMarketSized variable defined at the top of the function
+    // No need to redefine it here
     
     console.log(`Rendering table with ${useMarketSized ? 'market-sized' : 'raw'} data`);
     
@@ -2126,6 +2212,9 @@ function renderTable() {
     if (state.marketSizing && state.marketSizing.enabled) {
         renderMarketSizingToggle(true);
     }
+    
+    // Update data source indicator
+    updateDataSourceIndicator('#results-section', useMarketSized);
 }
 // End of renderTable function
 
@@ -2184,7 +2273,8 @@ function prepareTableData(currentProcessedData, useMarketSized = false) {
         marketData.forEach(record => {
             const band = record.PremiumBand;
             // Use market-sized loan if available and requested, otherwise use raw loan
-            const loanAmount = useMarketSized && record.MarketSizedLoan ? record.MarketSizedLoan : (record.Loan || 0);
+            const loanAmount = useMarketSized && record.MarketSizedLoan ? 
+                record.MarketSizedLoan : (record.Loan || 0);
             
             if (band) {
                 marketTotals.byPremiumBand[band] = (marketTotals.byPremiumBand[band] || 0) + loanAmount;
@@ -2576,12 +2666,6 @@ function applyFilters() {
         showLoading(false);
 }
 
-// Deprecated filter functions have been removed
-// All filtering logic is now consolidated in the unified applyFilters function
-// See the applyFilters function for implementation details
-
-// filterData function removed - replaced by unified applyFilters function
-
 /**
  * Event handler wrapper for the applyFilters function
  * This function is used as an event handler and calls the actual filtering function
@@ -2906,22 +2990,31 @@ function applyFilters(data, options = {}) {
 }
 
 /**
- * Get filtered data with caching support for improved performance
- * Uses a cache key based on filter options and current filter state
- * 
+ * Get filtered data with caching for performance
  * @param {Array} data - The dataset to filter
- * @param {Object} options - Filter options (see applyFilters)
- * @returns {Array} - Filtered dataset
+ * @param {Object} options - Filter options
+ * @returns {Array} - Filtered data
  * 
  * @example
  * // Get cached filtered data without lender filter
  * const marketData = getCachedFilteredData(state.esisData, { lenders: false });
  */
 function getCachedFilteredData(data, options = {}) {
-    // Create a cache key based on options and current filters
+    // Check if market sizing is enabled to include in cache key
+    const useMarketSized = shouldUseMarketSized();
+    
+    // Create a cache key based on options, current filters, and market sizing state
     const cacheKey = JSON.stringify({
         options,
-        filters: state.filters
+        filters: state.filters,
+        marketSized: useMarketSized // Include market sizing state in cache key
+    });
+    
+    // Log the current market sizing state for debugging
+    console.log('Getting filtered data with market sizing:', {
+        enabled: state.marketSizing?.enabled,
+        viewEnabled: state.marketSizing?.viewEnabled,
+        useMarketSized: useMarketSized
     });
     
     // Initialize filter cache if needed
@@ -2929,7 +3022,7 @@ function getCachedFilteredData(data, options = {}) {
     
     // Use cached results if available
     if (state.filterCache[cacheKey]) {
-        console.log('Using cached filtered data');
+        console.log('Using cached filtered data with market sizing:', useMarketSized);
         return state.filterCache[cacheKey];
     }
     
@@ -2938,6 +3031,8 @@ function getCachedFilteredData(data, options = {}) {
     
     // Cache the results
     state.filterCache[cacheKey] = filtered;
+    
+    console.log(`Cached ${filtered.length} filtered records with market sizing:`, useMarketSized);
     
     return filtered;
 }
@@ -3009,8 +3104,76 @@ function testOptimization() {
  * invalidateFilterCache();
  */
 function invalidateFilterCache() {
+    // Clear all caches that might contain filtered data
     state.filterCache = {};
-    console.log('Filter cache invalidated');
+    state.filteredDataCache = {};
+    
+    // Also invalidate any other cached data that depends on filtering
+    state.lenderMarketShareData = null;
+    state.lenderMarketShare = { selectedPremiumBands: state.lenderMarketShare?.selectedPremiumBands || [] };
+    
+    state.heatmapData = null;
+    
+    state.trendsData = null;
+    state.marketShareTrends = { selectedPremiumBands: state.marketShareTrends?.selectedPremiumBands || [] };
+    
+    console.log('All data caches invalidated due to filter or market sizing change');
+}
+
+/**
+ * Helper function to check if market sizing should be applied
+ * This centralizes the logic for determining whether to use market-sized data
+ * @returns {boolean} - Whether to use market-sized data
+ */
+function shouldUseMarketSized() {
+    return state.marketSizing && 
+           state.marketSizing.enabled && 
+           state.marketSizing.viewEnabled;
+}
+
+/**
+ * Toggles between raw and market-sized data views
+ * @param {boolean} enableMarketSized - Whether to enable market-sized data view
+ */
+function toggleMarketSizingView(enableMarketSized) {
+    // Make sure market sizing is initialized
+    if (!state.marketSizing) {
+        console.error('Cannot toggle market sizing view: market sizing is not initialized');
+        return;
+    }
+    
+    // Update state
+    const previousState = state.marketSizing.viewEnabled;
+    state.marketSizing.viewEnabled = enableMarketSized;
+    
+    console.log('Market sizing view toggled:', {
+        previousState: previousState,
+        newState: state.marketSizing.viewEnabled,
+        enabled: state.marketSizing.enabled
+    });
+    
+    // Update status text
+    const statusText = document.getElementById('toggle-status-text');
+    if (statusText) {
+        statusText.textContent = enableMarketSized ? 'Market-Sized Data' : 'Raw Data';
+    }
+    
+    // Update view toggle button text if it exists
+    if (elements.viewMarketSized) {
+        elements.viewMarketSized.textContent = enableMarketSized ? 
+            'View Raw Data' : 'View Market-Sized Data';
+    }
+    
+    // Force refresh of cached filtered data
+    invalidateFilterCache();
+    
+    // Update all visualizations
+    updateAllVisualizations();
+    
+    // Update data source indicators
+    updateDataSourceIndicators();
+    
+    console.log(`Market-sized view ${enableMarketSized ? 'enabled' : 'disabled'}`);
 }
 
 function resetFilters() {
@@ -3216,13 +3379,8 @@ function aggregateLenderMarketShare(selectedBands) {
     let filtered = getCachedFilteredData(state.esisData, { lenders: false });
     console.log(`Market Share Analysis: Using ${filtered.length} records (respecting all filters except lender)`);
     
-    // Restore original premium range
-    state.filters.premiumRange = originalPremiumRange;
-    
     // Determine whether to use market-sized data
-    const useMarketSized = state.marketSizing && 
-                          state.marketSizing.enabled && 
-                          state.marketSizing.viewEnabled;
+    const useMarketSized = shouldUseMarketSized();
     
     console.log(`Market Share Analysis: Using ${useMarketSized ? 'market-sized' : 'raw'} loan amounts`);
     
@@ -3403,7 +3561,7 @@ function aggregateLenderMarketShare(selectedBands) {
     summary.Total_above80_pct = 100;
     
     // Add a flag to indicate whether market-sized data was used
-    summary.usedMarketSized = useMarketSized;
+    summary.useMarketSized = useMarketSized;
     
     return {
         lenders,
@@ -3413,7 +3571,7 @@ function aggregateLenderMarketShare(selectedBands) {
         overallTotal_below80,
         overallTotal_above80,
         summary,
-        usedMarketSized // Add flag to return object as well
+        useMarketSized // Add flag to return object as well
     };
 }
 
@@ -3498,6 +3656,15 @@ function updateMarketShareTable() {
         console.error('Cannot update market share table: ESIS data is not available');
         return;
     }
+    
+    // Use the helper function to determine whether to use market-sized data
+    const useMarketSized = shouldUseMarketSized();
+    
+    console.log('Market Share Table: Using market sizing:', {
+        enabled: state.marketSizing?.enabled,
+        viewEnabled: state.marketSizing?.viewEnabled,
+        useMarketSized: useMarketSized
+    });
     
     // Create a custom filtered dataset that respects all filters EXCEPT lender filter
     const data = getCachedFilteredData(state.esisData, { lenders: false });
@@ -3604,6 +3771,11 @@ function updateMarketShareTable() {
         lenderData[lender].Total_above80 = 0;
     });
     
+    // Determine whether to use market-sized data
+    const useMarketSized = shouldUseMarketSized();
+    
+    console.log(`Market Share Analysis: Using ${useMarketSized ? 'market-sized' : 'raw'} loan amounts`);
+    
     // Aggregate data
     data.forEach(r => {
         const lender = r.BaseLender || r.Provider;
@@ -3611,7 +3783,10 @@ function updateMarketShareTable() {
         
         // Make sure we're processing records for all the selected bands
         if (lender && selectedBands.includes(band)) {
-            const loanAmount = r.Loan || 0;
+            // Use market-sized loan if available and requested, otherwise use raw loan
+            const loanAmount = useMarketSized && r.MarketSizedLoan ? 
+                r.MarketSizedLoan : (r.Loan || 0);
+                
             lenderData[lender][band] += loanAmount;
             bandTotals[band] += loanAmount;
             
@@ -3705,6 +3880,9 @@ function updateMarketShareTable() {
     summary.Total_above80 = overallTotal_above80;
     summary.Total_above80_pct = 100;
     
+    // Add a flag to indicate whether market-sized data was used
+    summary.useMarketSized = useMarketSized;
+    
     // Restore original premium range
     state.filters.premiumRange = originalPremiumRange;
     
@@ -3716,7 +3894,8 @@ function updateMarketShareTable() {
         overallTotal,
         overallTotal_below80,
         overallTotal_above80,
-        summary
+        summary,
+        useMarketSized // Add flag to data object
     };
     
     state.lenderMarketShareData = dataForRender;
@@ -3728,8 +3907,14 @@ function updateMarketShareTable() {
         console.log('DIAGNOSTIC - 500-520 band is missing from aggregated data bandTotals');
     }
     
+    // Log whether we're using market-sized data
+    console.log(`DIAGNOSTIC - Market sizing flag for renderLenderMarketShareTable: ${useMarketSized}`);
+    
     console.log('DIAGNOSTIC - Calling renderLenderMarketShareTable with bands:', selectedBands);
     renderLenderMarketShareTable(dataForRender, selectedBands);
+    
+    // Update data source indicator
+    updateDataSourceIndicator('#market-share-section', useMarketSized);
 }
 
 // --- MARKET SHARE: Render Tabulator table ---
@@ -3962,6 +4147,9 @@ function renderLenderMarketShareTable(data, selectedBands) {
     });
     // Add summary row
     tableData.push(data.summary);
+    // Check if market-sized data was used
+    const useMarketSized = data.useMarketSized || (data.summary && data.summary.useMarketSized);
+    
     // Render
     state.marketShareTable = new Tabulator(elements.marketShareTable, {
         data: tableData,
@@ -3977,6 +4165,9 @@ function renderLenderMarketShareTable(data, selectedBands) {
             }
         }
     });
+    
+    // Update data source indicator
+    updateDataSourceIndicator('#market-share-section', useMarketSized);
 }
 
 // --- MARKET SHARE: Export Function ---
@@ -3989,9 +4180,7 @@ function exportMarketShareData() {
 // --- HEATMAP: Data Processing Function ---
 function prepareHeatmapData(filteredData) {
     // Determine whether to use market-sized data
-    const useMarketSized = state.marketSizing && 
-                          state.marketSizing.enabled && 
-                          state.marketSizing.viewEnabled;
+    const useMarketSized = shouldUseMarketSized();
     
     console.log(`Heatmap: Using ${useMarketSized ? 'market-sized' : 'raw'} loan amounts`);
     
@@ -4012,7 +4201,7 @@ function prepareHeatmapData(filteredData) {
         premiumBands: premiumBands,
         lenderMode: {}, // Lender-centric view
         premiumMode: {},  // Premium-centric view
-        usedMarketSized: useMarketSized // Add flag to track data source
+        useMarketSized: useMarketSized // Add flag to track data source
     };
     
     // Create empty data structure
@@ -4317,86 +4506,57 @@ function updateHeatmap() {
     } else {
         heatmapVisualization.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Generating heatmap...</p></div>';
     }
+    
+    // Get filtered data without lender filter
+    const filteredData = getHeatmapData();
+    
+    // Get the heatmap visualization element again as it might have been recreated
+    let vizElement = document.getElementById('heatmap-visualization');
+    if (!vizElement) {
+        console.error('Heatmap visualization element not found after attempting to recreate it');
+        return;
+    }
+    
+    if (filteredData.length === 0) {
+        console.warn('No data available for heatmap visualization');
+        vizElement.innerHTML = '<p class="no-data">No data available for the selected filters.</p>';
+        return;
+    }
+    
+    // Check if we have enough unique lenders and premium bands for a meaningful heatmap
+    const uniqueLenders = new Set(filteredData.map(r => r.BaseLender || r.Provider));
+    const uniquePremiumBands = new Set(filteredData.map(r => r.PremiumBand));
+    
+    if (uniqueLenders.size <= 1 || uniquePremiumBands.size <= 1) {
+        console.warn('Not enough unique lenders or premium bands for a meaningful heatmap');
+        vizElement.innerHTML = 
+            '<p class="warning">Not enough data variation for a meaningful heatmap. ' + 
+            'Please adjust filters to include multiple lenders and premium bands.</p>';
+        return;
+    }
+    
+    // Use setTimeout to allow the loading indicator to render before processing data
+    setTimeout(() => {
+        // Prepare data for the heatmap
+        const heatmapData = prepareHeatmapData(filteredData);
         
-        // Get filtered data without lender filter
-        const filteredData = getHeatmapData();
+        // Get current visualization mode with fallback
+        const modeElement = document.querySelector('input[name="heatmap-mode"]:checked');
+        const mode = modeElement ? modeElement.value : 'lender'; // Default to lender mode if not found
+        console.log('Current heatmap mode:', mode);
         
-        // Get the heatmap visualization element again as it might have been recreated
-        let vizElement = document.getElementById('heatmap-visualization');
-        if (!vizElement) {
-            console.error('Heatmap visualization element not found after attempting to recreate it');
-            return;
-        }
+        // Render the heatmap
+        renderHeatmap(heatmapData, mode);
         
-        if (filteredData.length === 0) {
-            console.warn('No data available for heatmap visualization');
-            vizElement.innerHTML = '<p class="no-data">No data available for the selected filters.</p>';
-            return;
-        }
+        // Re-attach event listeners to radio buttons
+        attachHeatmapModeListeners();
         
-        // Check if we have enough unique lenders and premium bands for a meaningful heatmap
-        const uniqueLenders = new Set(filteredData.map(r => r.BaseLender || r.Provider));
-        const uniquePremiumBands = new Set(filteredData.map(r => r.PremiumBand));
+        // Update data source indicator using the common function
+        const useMarketSized = heatmapData.useMarketSized;
+        updateDataSourceIndicator('#heatmap-section', useMarketSized);
         
-        if (uniqueLenders.size <= 1 || uniquePremiumBands.size <= 1) {
-            console.warn('Not enough unique lenders or premium bands for a meaningful heatmap');
-            vizElement.innerHTML = 
-                '<p class="warning">Not enough data variation for a meaningful heatmap. ' + 
-                'Please adjust filters to include multiple lenders and premium bands.</p>';
-            return;
-        }
-        
-        // Use setTimeout to allow the loading indicator to render before processing data
-        setTimeout(() => {
-            // Prepare data for the heatmap
-            const heatmapData = prepareHeatmapData(filteredData);
-            
-            // Get current visualization mode with fallback
-            const modeElement = document.querySelector('input[name="heatmap-mode"]:checked');
-            const mode = modeElement ? modeElement.value : 'lender'; // Default to lender mode if not found
-            console.log('Current heatmap mode:', mode);
-            
-            // Render the heatmap
-            renderHeatmap(heatmapData, mode);
-            
-            // Re-attach event listeners to radio buttons
-            attachHeatmapModeListeners();
-            
-            // After the heatmap is rendered, add an indicator for market-sized data
-            if (state.marketSizing && state.marketSizing.enabled && state.marketSizing.viewEnabled) {
-                const heatmapVisualization = document.getElementById('heatmap-visualization');
-                if (heatmapVisualization) {
-                    // Check if indicator already exists
-                    let indicator = heatmapVisualization.querySelector('.market-sized-indicator');
-                    if (!indicator) {
-                        indicator = document.createElement('div');
-                        indicator.className = 'market-sized-indicator';
-                        indicator.textContent = 'Showing Market-Sized Data';
-                        indicator.style.padding = '5px';
-                        indicator.style.backgroundColor = '#f0f8ff';
-                        indicator.style.borderRadius = '4px';
-                        indicator.style.marginBottom = '10px';
-                        indicator.style.fontWeight = 'bold';
-                        indicator.style.textAlign = 'center';
-                        
-                        // Add to the top of the visualization
-                        if (heatmapVisualization.firstChild) {
-                            heatmapVisualization.insertBefore(indicator, heatmapVisualization.firstChild);
-                        } else {
-                            heatmapVisualization.appendChild(indicator);
-                        }
-                    }
-                }
-            } else {
-                // Remove indicator if market-sized data is not being shown
-                const indicator = document.querySelector('.market-sized-indicator');
-                if (indicator) {
-                    indicator.remove();
-                }
-            }
-            
-            console.log('Heatmap updated successfully');
-        }, 10);
+        console.log('Heatmap updated successfully');
+    }, 10);
 }
 
 // Function to update the heatmap without resetting it, using current filters
@@ -4979,9 +5139,7 @@ function processMarketShareTrendsData(filteredData, selectedBands) {
 // Group data by month and lender for the trends chart
 function groupByMonthAndLender(data) {
     // Determine whether to use market-sized data
-    const useMarketSized = state.marketSizing && 
-                          state.marketSizing.enabled && 
-                          state.marketSizing.viewEnabled;
+    const useMarketSized = shouldUseMarketSized();
     
     console.log(`Market Share Trends: Using ${useMarketSized ? 'market-sized' : 'raw'} loan amounts`);
     
@@ -5079,7 +5237,7 @@ function groupByMonthAndLender(data) {
         months: months.map(m => m.key),
         monthLabels: months.map(m => m.label),
         data: result,
-        usedMarketSized: useMarketSized // Add flag to track data source
+        useMarketSized: useMarketSized // Add flag to track data source
     };
 }
 
@@ -5237,6 +5395,10 @@ function renderTrendsChart(monthlyData, lenders) {
         try {
             new Chart(ctx, chartConfig);
             console.log('Chart rendered successfully with', lenders.length, 'top lenders');
+            
+            // Update data source indicator
+            const useMarketSized = monthlyData.useMarketSized;
+            updateDataSourceIndicator('#market-share-trends-section', useMarketSized);
         } catch (chartError) {
             // This try-catch block is kept because it's handling a specific Chart.js error with a fallback UI
             // and is not redundant with our general error handling wrapper
