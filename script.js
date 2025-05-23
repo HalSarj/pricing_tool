@@ -2334,6 +2334,8 @@ function applyFilters(data, options = {}) {
                         return false;
                     } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
                         return false;
+                    } else if (state.filters.ltvRange === 'above-85' && ltv <= 85) {
+                        return false;
                     } else if (state.filters.ltvRange === 'above-90' && ltv <= 90) {
                         return false;
                     }
@@ -2476,7 +2478,7 @@ function testOptimization() {
         premiumRange: [0, 500],
         productTypes: [],
         purchaseTypes: [],
-        ltvRange: 'all' // 'all', 'below-80', 'above-80', or 'above-90' 'all'
+        ltvRange: 'all' // 'all', 'below-80', 'above-80', 'above-85', or 'above-90'
     };
     
     // Run the test
@@ -4329,6 +4331,8 @@ function updateMarketShareTrendsChart() {
                         ltvFilterPassed = false;
                     } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
                         ltvFilterPassed = false;
+                    } else if (state.filters.ltvRange === 'above-85' && ltv <= 85) {
+                        ltvFilterPassed = false;
                     } else if (state.filters.ltvRange === 'above-90' && ltv <= 90) {
                         ltvFilterPassed = false;
                     }
@@ -5095,6 +5099,8 @@ function testFilterImplementation(testData, testFilters) {
                     if (state.filters.ltvRange === 'below-80' && ltv >= 80) {
                         return false;
                     } else if (state.filters.ltvRange === 'above-80' && ltv < 80) {
+                        return false;
+                    } else if (state.filters.ltvRange === 'above-85' && ltv <= 85) {
                         return false;
                     } else if (state.filters.ltvRange === 'above-90' && ltv <= 90) {
                         return false;
